@@ -7,9 +7,10 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class RegisterUserResponse {
     private Long position;
+    private String queueType;
 
-    public RegisterUserResponse(Long position) {
+    public RegisterUserResponse(Long position, String queueType) {
         this.position = position;
+        this.queueType = queueType;
     }
-
 }
