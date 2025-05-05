@@ -50,12 +50,23 @@ public class UserService {
     /**
     * 대기큐에 있는 상위 count 명을 허용큐로 옮김
     * */
-    public Mono<?> allowUser(String queueType, Long count) {
+    public Mono<Long> allowUser(String queueType, Long count) {
 
         // 만약 대기 큐의 인원이 count 명보다 적더라도 ZSet.popMin은 내부적으로 count보다 적은 요소가 있으면 있는 만큼만 반환하므로 따로 처리 필요 없음
         return reactiveRedisTemplate.opsForZSet().popMin(queueType + WAIT_QUEUE, count)
                 .flatMap(member -> reactiveRedisTemplate.opsForZSet().add(queueType + ALLOW_QUEUE, member.getValue(), Instant.now().getEpochSecond()))
                 .count()
                 .doOnSuccess(allowedCount -> log.info("허용큐로 이동된 사용자 수: {}", allowedCount));
+    }
+
+    /**
+     * 허용큐 내부에서 특정 사용자가 입장 가능한지 여부 파악
+    * */
+    public Mono<Boolean> isAllowedUser(String queueType, Long userId) {
+
+        // 사용자가 허용 큐에 있다면 순위 반환 ( 0부터 ~ )
+        return reactiveRedisTemplate.opsForZSet().rank(queueType + ALLOW_QUEUE, userId.toString())
+                .defaultIfEmpty( -1L) // 사용자가 허용 큐에 없으면 -1로 대체
+                .map(rank -> rank >= 0);
     }
 }

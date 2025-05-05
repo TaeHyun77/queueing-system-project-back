@@ -41,6 +41,13 @@ dependencies {
 	// redis 의존성
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 
+	// redis 테스트 코드 작성
+	implementation 'it.ozimov:embedded-redis:0.7.2'
+	testImplementation 'com.github.codemonstur:embedded-redis:1.4.3'
+
+	// WebFlux에서 Mono/Flux의 emit, 완료 여부, 오류 등을 검증하는 도구
+	testImplementation 'io.projectreactor:reactor-test'
+
 }
 
 tasks.named('test') {
