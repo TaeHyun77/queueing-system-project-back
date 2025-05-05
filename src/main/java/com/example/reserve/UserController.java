@@ -26,10 +26,17 @@ public class UserController {
         return userService.searchUserRanking(userId, queueType);
     }
 
-    // 허용 쿠
+    // 허용 큐 이동
     @PostMapping("/allow")
     public Mono<?> allowUser(@RequestParam(name = "queueType", defaultValue = "reserve") String queueType,
                              @RequestParam(name = "count") Long count) {
         return userService.allowUser(queueType, count);
+    }
+
+    // 진입 여부 확인
+    @GetMapping("/isAllowed")
+    public Mono<Boolean> isAllowedUser(@RequestParam(name = "user_id") Long userId,
+                                       @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
+        return userService.isAllowedUser(queueType, userId);
     }
 }
