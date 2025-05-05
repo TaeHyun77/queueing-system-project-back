@@ -70,7 +70,7 @@ public class UserEnterTest {
 
         // 조회 테스트
         StepVerifier.create(userService.searchUserRanking(1L, "reserve"))
-                .expectNext("1" + "님의 순위 : 1번째")
+                .expectNext(1L)
                 .verifyComplete();
 
         // 예외 발생 테스트

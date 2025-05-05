@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import java.time.Instant;
@@ -39,12 +40,12 @@ public class UserService {
     /**
     * 사용자의 순위 조회
     * */
-    public Mono<String> searchUserRanking(Long userId, String queueType) {
+    public Mono<Long> searchUserRanking(Long userId, String queueType) {
         return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId.toString())
                 // 대기큐 안에 해당되는 유저가 없으면 예외 발생
                 .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE)))
-                .flatMap(rank -> Mono.just(userId.toString() + "님의 순위 : " + (rank + 1) + "번째"))
-                .doOnSuccess(result -> log.info("{}님의 순위 조회 성공 !, {}", userId, result));
+                .flatMap(rank -> Mono.just((rank + 1)))
+                .doOnSuccess(result -> log.info("{}님의 순위 : {}번째", userId, result));
     }
 
     /**
@@ -68,5 +69,16 @@ public class UserService {
         return reactiveRedisTemplate.opsForZSet().rank(queueType + ALLOW_QUEUE, userId.toString())
                 .defaultIfEmpty( -1L) // 사용자가 허용 큐에 없으면 -1로 대체
                 .map(rank -> rank >= 0);
+    }
+
+    public Mono<Void> cancelUser(Long userId, String queueType) {
+        return reactiveRedisTemplate.opsForZSet().remove(queueType + WAIT_QUEUE, userId.toString())
+                .flatMap(removedCount -> {
+                    if (removedCount == 0) {
+                        return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE));
+                    }
+                    return Mono.<Void>empty();
+                })
+                .doOnSuccess(v -> log.info("{}님 대기열에서 취소 완료", userId));
     }
 }

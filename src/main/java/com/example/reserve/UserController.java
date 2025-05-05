@@ -2,6 +2,7 @@ package com.example.reserve;
 
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 
@@ -19,9 +20,16 @@ public class UserController {
         return userService.registerWaitQueue(userId, queueType);
     }
 
+    // 대기열 취소
+    @DeleteMapping("/cancel")
+    public Mono<Void> cancelUser(@RequestParam(name = "user_id") Long userId,
+                                                 @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
+        return userService.cancelUser(userId, queueType);
+    }
+
     // 사용자 랭킹 조회
     @GetMapping("/search/ranking")
-    public Mono<?> searchUserRanking(@RequestParam(name = "user_id") Long userId,
+    public Mono<Long> searchUserRanking(@RequestParam(name = "user_id") Long userId,
                                      @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
         return userService.searchUserRanking(userId, queueType);
     }
