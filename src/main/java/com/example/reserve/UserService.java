@@ -4,9 +4,9 @@ import com.example.reserve.exception.ErrorCode;
 import com.example.reserve.exception.ReserveException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import java.time.Instant;
@@ -18,6 +18,7 @@ public class UserService {
 
     // Spring WebFlux 환경에서 비동기/논블로킹 방식으로 Redis에 접근
     private final ReactiveRedisTemplate<String, String> reactiveRedisTemplate;
+    private final ApplicationEventPublisher eventPublisher;
 
     public static final String WAIT_QUEUE = ":user-queue:wait";
     public static final String ALLOW_QUEUE = ":user-queue:allow";
@@ -32,7 +33,10 @@ public class UserService {
         return reactiveRedisTemplate.opsForZSet().add(queueType + WAIT_QUEUE, userId.toString(), enterTimestamp)
                 .filter(i -> i)
                 .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER)))
-                .flatMap(i -> reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId.toString()))
+                .flatMap(i -> {
+                    eventPublisher.publishEvent(new QueueUpdateEvent(queueType));
+                    return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId.toString());
+                })
                 .map(i -> i >= 0 ? i+1 : i)
                 .doOnSuccess(result -> log.info("{}님 {}번째로 사용자 대기열 등록 성공", userId, result));
     }
@@ -71,12 +75,16 @@ public class UserService {
                 .map(rank -> rank >= 0);
     }
 
+    /**
+     * 대기큐 등록 삭제
+    * */
     public Mono<Void> cancelUser(Long userId, String queueType) {
         return reactiveRedisTemplate.opsForZSet().remove(queueType + WAIT_QUEUE, userId.toString())
                 .flatMap(removedCount -> {
                     if (removedCount == 0) {
                         return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE));
                     }
+                    eventPublisher.publishEvent(new QueueUpdateEvent(queueType));
                     return Mono.<Void>empty();
                 })
                 .doOnSuccess(v -> log.info("{}님 대기열에서 취소 완료", userId));
