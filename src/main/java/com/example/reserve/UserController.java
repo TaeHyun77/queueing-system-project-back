@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 @RequiredArgsConstructor
 @RequestMapping("/user")
@@ -12,6 +13,8 @@ import reactor.core.publisher.Mono;
 public class UserController {
 
     private final UserService userService;
+    private final Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
+
 
     // 대기열 등록
     @PostMapping("/enter")
