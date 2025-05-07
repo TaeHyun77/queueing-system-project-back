@@ -1,16 +1,19 @@
 package com.example.reserve;
 
+import com.example.reserve.exception.ErrorCode;
+import com.example.reserve.exception.ReserveException;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.event.EventListener;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
 import java.util.Map;
@@ -33,41 +36,75 @@ public class QueueSseController {
     public Flux<ServerSentEvent<String>> streamQueue(@RequestParam String userId, @RequestParam String queueType) {
         ObjectMapper objectMapper = new ObjectMapper();
 
-        // 연결 되면 현재 순위 전송
-        Flux<ServerSentEvent<String>> initialEvent = userService.searchUserRanking(Long.parseLong(userId), queueType)
-                .map(rank -> {
-                    try {
-                        String json = objectMapper.writeValueAsString(Map.of(
-                                "event", "update",
-                                "rank", rank
-                        ));
-                        return ServerSentEvent.builder(json).build();
-                    } catch (Exception e) {
-                        return ServerSentEvent.builder("error").build();
-                    }
-                })
-                .flux();
+        // 최초 연결 시
+        Mono<ServerSentEvent<String>> initialEvent =
+                userService.isAllowedUser(queueType, Long.parseLong(userId))
+                        .flatMap(allowed -> {
+                            if (allowed) {
+                                // 허용된 유저면 confirmed 이벤트 바로 전송하여 클라이언트에서 타겟 페이지로 이동하게끔
+                                String json = null;
+                                try {
+                                    json = objectMapper.writeValueAsString(Map.of(
+                                            "event", "confirmed"
+                                    ));
+                                } catch (JsonProcessingException e) {
+                                    return Mono.error(new ReserveException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.ALLOW_STATUS_JSON_EXCEPTION));
+                                }
+                                return Mono.just(ServerSentEvent.builder(json).build());
+                            } else {
+                                // 대기중인 유저면 순위 전송
+                                return userService.searchUserRanking(Long.parseLong(userId), queueType)
+                                        .map(rank -> {
+                                            String json = null;
+                                            try {
+                                                json = objectMapper.writeValueAsString(Map.of(
+                                                        "event", "update",
+                                                        "rank", rank
+                                                ));
+                                            } catch (JsonProcessingException e) {
+                                                throw new RuntimeException(e);
+                                            }
+                                            return ServerSentEvent.builder(json).build();
+                                        });
+                            }
+                        });
 
-        // 이후 발생하는 이벤트에 대한 실시간 순위 응답
+        // 이후 실시간 이벤트 처리
         Flux<ServerSentEvent<String>> streamEvents = sink.asFlux()
                 .filter(e -> e.getQueueType().equals(queueType))
                 .flatMap(e ->
-                        userService.searchUserRanking(Long.parseLong(userId), queueType)
-                                .map(rank -> {
-                                    try {
-                                        String json = objectMapper.writeValueAsString(Map.of(
-                                                "event", "update",
-                                                "rank", rank
-                                        ));
-                                        return ServerSentEvent.builder(json).build();
-                                    } catch (Exception ex) {
-                                        return ServerSentEvent.builder("error").build();
+                        userService.isAllowedUser(queueType, Long.parseLong(userId))
+                                .flatMap(allowed -> {
+                                    if (allowed) {
+                                        String json = null;
+                                        try {
+                                            json = objectMapper.writeValueAsString(Map.of(
+                                                    "event", "confirmed"
+                                            ));
+                                        } catch (JsonProcessingException ex) {
+                                            return Mono.error(new ReserveException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.ALLOW_STATUS_JSON_EXCEPTION));
+                                        }
+                                        return Mono.just(ServerSentEvent.builder(json).build());
+                                    } else {
+                                        return userService.searchUserRanking(Long.parseLong(userId), queueType)
+                                                .map(rank -> {
+                                                    String json = null;
+                                                    try {
+                                                        json = objectMapper.writeValueAsString(Map.of(
+                                                                "event", "update",
+                                                                "rank", rank
+                                                        ));
+                                                    } catch (JsonProcessingException ex) {
+                                                        throw new RuntimeException(ex);
+                                                    }
+                                                    return ServerSentEvent.builder(json).build();
+                                                });
                                     }
                                 })
                 );
 
-        // 병합
         return Flux.merge(initialEvent, streamEvents);
     }
+
 }
 
