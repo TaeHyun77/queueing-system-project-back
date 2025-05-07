@@ -7,9 +7,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import java.time.Instant;
+import java.util.List;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -45,11 +47,25 @@ public class UserService {
     * 사용자의 순위 조회
     * */
     public Mono<Long> searchUserRanking(Long userId, String queueType) {
-        return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId.toString())
-                // 대기큐 안에 해당되는 유저가 없으면 예외 발생
-                .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE)))
-                .flatMap(rank -> Mono.just((rank + 1)))
-                .doOnSuccess(result -> log.info("{}님의 순위 : {}번째", userId, result));
+
+        return isAllowedUser(queueType, userId)
+                .flatMap(allowed -> {
+                    if (allowed) {
+                        // 허용된 유저는 프론트에서 따로 처리
+                        return Mono.just(-1L);
+                    }
+
+                    return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId.toString())
+                            .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE)))
+                            .map(rank -> rank + 1);
+                })
+                .doOnSuccess(result -> {
+                    if (result == -1L) {
+                        log.info("{}님은 허용큐에 있어 순위 조회 불필요", userId);
+                    } else {
+                        log.info("{}님의 순위 : {}번째", userId, result);
+                    }
+                });
     }
 
     /**
@@ -88,5 +104,27 @@ public class UserService {
                     return Mono.<Void>empty();
                 })
                 .doOnSuccess(v -> log.info("{}님 대기열에서 취소 완료", userId));
+    }
+
+    @Scheduled(fixedDelay = 3000, initialDelay = 20000) // 실행 10초 후부터 3초마다 스케줄링
+    public void moveUserToAllowQ() {
+        Long maxAllowedUsers = 3L;
+
+        // 여러 종류의 대기 큐가 있다고 가정
+        List<String> queueTypes = List.of("reserve"); // 확장 가능하게
+
+        queueTypes.forEach(queueType -> {
+            allowUser(queueType, maxAllowedUsers)
+                    .doOnSuccess(count -> {
+                        if (count > 0) {
+                            log.info("Moved {} users to the allow queue for [{}]", count, queueType);
+                            eventPublisher.publishEvent(new QueueUpdateEvent(queueType));
+                        } else {
+                            log.info("No users to move for queue [{}]", queueType);
+                        }
+                    })
+                    .subscribe(); // 반드시 subscribe() 호출해야 비동기 실행됨
+        });
+
     }
 }

@@ -47,7 +47,6 @@ dependencies {
 
 	// WebFlux에서 Mono/Flux의 emit, 완료 여부, 오류 등을 검증하는 도구
 	testImplementation 'io.projectreactor:reactor-test'
-
 }
 
 tasks.named('test') {
