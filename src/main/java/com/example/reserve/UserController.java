@@ -1,11 +1,17 @@
 package com.example.reserve;
 
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
+
+import java.time.Duration;
 
 @RequiredArgsConstructor
 @RequestMapping("/user")
@@ -49,5 +55,19 @@ public class UserController {
     public Mono<Boolean> isAllowedUser(@RequestParam(name = "user_id") Long userId,
                                        @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
         return userService.isAllowedUser(queueType, userId);
+    }
+
+    @GetMapping("/isValidateToken")
+    public Mono<Boolean> isAccessTokenValid(@RequestParam(name = "user_id") Long userId,
+                                            @RequestParam(name = "queueType", defaultValue = "reserve") String queueType,
+                                            @RequestParam(name = "token") String token) {
+        return userService.isAccessTokenValid(queueType, userId, token);
+    }
+
+    @GetMapping("/createCookie")
+    public Mono<ResponseEntity<String>> sendCookie(@RequestParam(name = "user_id") Long userId,
+                                              @RequestParam(defaultValue = "reserve") String queueType,
+                                              HttpServletResponse response) {
+        return userService.sendCookie(userId, queueType, response);
     }
 }

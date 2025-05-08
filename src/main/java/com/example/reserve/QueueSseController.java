@@ -15,7 +15,6 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
-
 import java.util.Map;
 
 @RestController
@@ -40,34 +39,34 @@ public class QueueSseController {
         Mono<ServerSentEvent<String>> initialEvent =
                 userService.isAllowedUser(queueType, Long.parseLong(userId))
                         .flatMap(allowed -> {
-                            if (allowed) {
-                                // 허용된 유저면 confirmed 이벤트 바로 전송하여 클라이언트에서 타겟 페이지로 이동하게끔
-                                String json = null;
-                                try {
+                            String json;
+                            try {
+                                if (allowed) {
                                     json = objectMapper.writeValueAsString(Map.of(
-                                            "event", "confirmed"
+                                            "event", "confirmed",
+                                            "user_id", userId
                                     ));
-                                } catch (JsonProcessingException e) {
-                                    return Mono.error(new ReserveException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.ALLOW_STATUS_JSON_EXCEPTION));
+                                    return Mono.just(ServerSentEvent.builder(json).build());
+                                } else {
+                                    return userService.searchUserRanking(Long.parseLong(userId), queueType)
+                                            .map(rank -> {
+                                                try {
+                                                    String updateJson = objectMapper.writeValueAsString(Map.of(
+                                                            "event", "update",
+                                                            "rank", rank
+                                                    ));
+                                                    return ServerSentEvent.builder(updateJson).build();
+                                                } catch (JsonProcessingException e) {
+                                                    throw new RuntimeException(e);
+                                                }
+                                            });
                                 }
-                                return Mono.just(ServerSentEvent.builder(json).build());
-                            } else {
-                                // 대기중인 유저면 순위 전송
-                                return userService.searchUserRanking(Long.parseLong(userId), queueType)
-                                        .map(rank -> {
-                                            String json = null;
-                                            try {
-                                                json = objectMapper.writeValueAsString(Map.of(
-                                                        "event", "update",
-                                                        "rank", rank
-                                                ));
-                                            } catch (JsonProcessingException e) {
-                                                throw new RuntimeException(e);
-                                            }
-                                            return ServerSentEvent.builder(json).build();
-                                        });
+                            } catch (JsonProcessingException e) {
+                                return Mono.error(new RuntimeException("JSON 변환 실패", e));
                             }
                         });
+
+
 
         // 이후 실시간 이벤트 처리
         Flux<ServerSentEvent<String>> streamEvents = sink.asFlux()
@@ -105,6 +104,8 @@ public class QueueSseController {
 
         return Flux.merge(initialEvent, streamEvents);
     }
+
+
 
 }
 
