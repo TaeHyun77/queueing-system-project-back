@@ -37,7 +37,7 @@ public class QueueSseController {
 
         // 최초 연결 시
         Mono<ServerSentEvent<String>> initialEvent =
-                userService.isAllowedUser(queueType, Long.parseLong(userId))
+                userService.isAllowedUser(userId, queueType)
                         .flatMap(allowed -> {
                             String json;
                             try {
@@ -48,7 +48,7 @@ public class QueueSseController {
                                     ));
                                     return Mono.just(ServerSentEvent.builder(json).build());
                                 } else {
-                                    return userService.searchUserRanking(Long.parseLong(userId), queueType)
+                                    return userService.searchUserRanking(userId, queueType)
                                             .map(rank -> {
                                                 try {
                                                     String updateJson = objectMapper.writeValueAsString(Map.of(
@@ -66,13 +66,11 @@ public class QueueSseController {
                             }
                         });
 
-
-
         // 이후 실시간 이벤트 처리
         Flux<ServerSentEvent<String>> streamEvents = sink.asFlux()
                 .filter(e -> e.getQueueType().equals(queueType))
                 .flatMap(e ->
-                        userService.isAllowedUser(queueType, Long.parseLong(userId))
+                        userService.isAllowedUser(userId, queueType)
                                 .flatMap(allowed -> {
                                     if (allowed) {
                                         String json = null;
@@ -85,7 +83,7 @@ public class QueueSseController {
                                         }
                                         return Mono.just(ServerSentEvent.builder(json).build());
                                     } else {
-                                        return userService.searchUserRanking(Long.parseLong(userId), queueType)
+                                        return userService.searchUserRanking(userId, queueType)
                                                 .map(rank -> {
                                                     String json = null;
                                                     try {
