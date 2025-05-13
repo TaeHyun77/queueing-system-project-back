@@ -124,10 +124,8 @@ Redis의  Sorted Set 자료 구조가 생각났습니다.<br><br>
 Spring Framework의 기술 스택 중 하나로, 리액티브 프로그래밍을 지원하여 Asynchronous Non-blocking와 Event-Driven 아키텍처를 기반으로 동작하는 프레임워크
 
 > `Event-Driven` 이벤트 기반 구조 : 이벤트가 발생했을 때 반응하여 동작하는 시스템 구조
-> 
 
 > `Asynchronous Non-blocking I/O`을 사용하여 I/O 작업의 완료를 기다리는 동안에도 다른 작업을 동시에 처리하여 리소스를 효율적으로 사용할 수 있도록 함
-> 
 
 기존의 Spring MVC는 각 요청마다 하나의 스레드를 사용하지만, 이런 방식은 동시 접속자가 많을수록 스레드가 고갈
 
