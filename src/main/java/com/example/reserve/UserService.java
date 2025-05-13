@@ -13,6 +13,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
+
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -35,16 +37,16 @@ public class UserService {
     /**
     * 대기열 등록
     * */
-    public Mono<Long> registerWaitQueue(Long userId, String queueType){
+    public Mono<Long> registerUser(String userId, String queueType){
 
         long enterTimestamp = Instant.now().getEpochSecond();
 
-        return reactiveRedisTemplate.opsForZSet().add(queueType + WAIT_QUEUE, userId.toString(), enterTimestamp)
+        return reactiveRedisTemplate.opsForZSet().add(queueType + WAIT_QUEUE, userId, enterTimestamp)
                 .filter(i -> i)
                 .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER)))
                 .flatMap(i -> {
                     eventPublisher.publishEvent(new QueueUpdateEvent(queueType));
-                    return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId.toString());
+                    return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId);
                 })
                 .map(i -> i >= 0 ? i+1 : i)
                 .doOnSuccess(result -> log.info("{}님 {}번째로 사용자 대기열 등록 성공", userId, result));
@@ -53,7 +55,7 @@ public class UserService {
     /**
     * 사용자의 순위 조회
     * */
-    public Mono<Long> searchUserRanking(Long userId, String queueType) {
+    public Mono<Long> searchUserRanking(String userId, String queueType) {
 
         return isAllowedUser(queueType, userId)
                 .flatMap(allowed -> {
@@ -62,7 +64,7 @@ public class UserService {
                         return Mono.just(-1L);
                     }
 
-                    return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId.toString())
+                    return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId)
                             .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE)))
                             .map(rank -> rank + 1);
                 })
@@ -81,7 +83,7 @@ public class UserService {
     public Mono<Long> allowUser(String queueType, Long count) {
         return reactiveRedisTemplate.opsForZSet().popMin(queueType + WAIT_QUEUE, count)
                 .flatMap(member -> {
-                    Long userId = Long.parseLong(member.getValue());
+                    String userId = member.getValue();
 
                     return reactiveRedisTemplate.opsForZSet()
                             .add(queueType + ALLOW_QUEUE, member.getValue(), Instant.now().getEpochSecond())
@@ -95,10 +97,10 @@ public class UserService {
     /**
      * 허용큐 내부에서 특정 사용자가 입장 가능한지 여부 파악
     * */
-    public Mono<Boolean> isAllowedUser(String queueType, Long userId) {
+    public Mono<Boolean> isAllowedUser(String userId, String queueType) {
 
         // 사용자가 허용 큐에 있다면 순위 반환 ( 0부터 ~ )
-        return reactiveRedisTemplate.opsForZSet().rank(queueType + ALLOW_QUEUE, userId.toString())
+        return reactiveRedisTemplate.opsForZSet().rank(queueType + ALLOW_QUEUE, userId)
                 .defaultIfEmpty( -1L) // 사용자가 허용 큐에 없으면 -1로 대체
                 .map(rank -> rank >= 0);
     }
@@ -106,8 +108,8 @@ public class UserService {
     /**
      * 대기큐 등록 삭제
     * */
-    public Mono<Void> cancelUser(Long userId, String queueType) {
-        return reactiveRedisTemplate.opsForZSet().remove(queueType + WAIT_QUEUE, userId.toString())
+    public Mono<Void> cancelUser(String userId, String queueType) {
+        return reactiveRedisTemplate.opsForZSet().remove(queueType + WAIT_QUEUE, userId)
                 .flatMap(removedCount -> {
                     if (removedCount == 0) {
                         return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE));
@@ -140,15 +142,15 @@ public class UserService {
     }
 
     // 토큰의 유효성 검사
-    public Mono<Boolean> isAccessTokenValid(String queueType, Long userId, String token) {
+    public Mono<Boolean> isAccessTokenValid(String userId, String queueType, String token) {
+
         return generateAccessToken(queueType, userId)
                 .map(storedToken -> storedToken.equals(token))
                 .defaultIfEmpty(false);
     }
 
-
     // 유효성 검사를 위한 토큰 생성
-    public static Mono<String> generateAccessToken(String queueType, Long userId) {
+    public static Mono<String> generateAccessToken(String userId, String queueType) {
         try {
             // MessageDigest : 해시 알고리즘 사용을 위한 클래스
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -164,10 +166,13 @@ public class UserService {
         }
     }
 
-    public Mono<ResponseEntity<String>> sendCookie(Long userId, String queueType, HttpServletResponse response) {
+    public Mono<ResponseEntity<String>> sendCookie(String userId, String queueType, HttpServletResponse response) {
+
+        String encodedName = URLEncoder.encode(userId, StandardCharsets.UTF_8);
+
         return UserService.generateAccessToken(queueType, userId)
                 .map(token -> {
-                    Cookie cookie = new Cookie(queueType + "_user-access-cookie_" + userId, token);
+                    Cookie cookie = new Cookie(queueType + "_user-access-cookie_" + encodedName, token);
                     cookie.setPath("/");
                     cookie.setMaxAge(300);
                     response.addCookie(cookie);
