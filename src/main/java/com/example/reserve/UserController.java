@@ -22,6 +22,12 @@ public class UserController {
         return userService.registerUser(userId, queueType);
     }
 
+    @GetMapping("/isExist")
+    public Mono<Boolean> isExistUserInQueue(@RequestParam(name = "user_id") String userId,
+                                            @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
+        return userService.isExistUserInQueue(userId, queueType);
+    }
+
     // 대기열 취소
     @DeleteMapping("/cancel")
     public Mono<Void> cancelUser(@RequestParam(name = "user_id") String userId,
