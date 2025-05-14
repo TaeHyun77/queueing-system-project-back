@@ -10,16 +10,13 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
-
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
-import java.util.List;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -65,11 +62,18 @@ public class UserService {
                     }
 
                     return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId)
-                            .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE)))
-                            .map(rank -> rank + 1);
+                            .flatMap(rank -> {
+                                if (rank == null) {
+                                    return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE));
+                                }
+
+                                return Mono.just(rank + 1);
+                            });
                 })
                 .doOnSuccess(result -> {
-                    if (result == -1L) {
+                    if (result == null) {
+                        log.info("사용자 순위 조회 실패 !");
+                    } else if (result == -1L) {
                         log.info("{}님은 허용큐에 있어 순위 조회 불필요", userId);
                     } else {
                         log.info("{}님의 순위 : {}번째", userId, result);
@@ -93,7 +97,6 @@ public class UserService {
                 .doOnSuccess(allowedCount -> log.info("허용큐로 이동된 사용자 수: {}", allowedCount));
     }
 
-
     /**
      * 허용큐 내부에서 특정 사용자가 입장 가능한지 여부 파악
     * */
@@ -109,6 +112,9 @@ public class UserService {
      * 대기큐 등록 삭제
     * */
     public Mono<Void> cancelUser(String userId, String queueType) {
+
+        log.info("cancel userId : {}", userId);
+
         return reactiveRedisTemplate.opsForZSet().remove(queueType + WAIT_QUEUE, userId)
                 .flatMap(removedCount -> {
                     if (removedCount == 0) {
@@ -120,7 +126,7 @@ public class UserService {
                 .doOnSuccess(v -> log.info("{}님 대기열에서 취소 완료", userId));
     }
 
-    @Scheduled(fixedDelay = 3000, initialDelay = 20000) // 실행 10초 후부터 3초마다 스케줄링
+/*    @Scheduled(fixedDelay = 3000, initialDelay = 20000) // 실행 20초 후부터 3초마다 스케줄링
     public void moveUserToAllowQ() {
         Long maxAllowedUsers = 3L;
 
@@ -139,12 +145,12 @@ public class UserService {
                     })
                     .subscribe(); // 반드시 subscribe() 호출해야 비동기 실행됨
         });
-    }
+    }*/
 
     // 토큰의 유효성 검사
     public Mono<Boolean> isAccessTokenValid(String userId, String queueType, String token) {
 
-        return generateAccessToken(queueType, userId)
+        return generateAccessToken(userId, queueType)
                 .map(storedToken -> storedToken.equals(token))
                 .defaultIfEmpty(false);
     }
@@ -170,7 +176,7 @@ public class UserService {
 
         String encodedName = URLEncoder.encode(userId, StandardCharsets.UTF_8);
 
-        return UserService.generateAccessToken(queueType, userId)
+        return UserService.generateAccessToken(userId, queueType)
                 .map(token -> {
                     Cookie cookie = new Cookie(queueType + "_user-access-cookie_" + encodedName, token);
                     cookie.setPath("/");
@@ -178,5 +184,13 @@ public class UserService {
                     response.addCookie(cookie);
                     return ResponseEntity.ok("쿠키 발급 완료");
                 });
+    }
+
+    public Mono<Boolean> isExistUserInQueue(String userId, String queueType) {
+
+        return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId)
+                .map(rank -> true) // 존재하면 true
+                .defaultIfEmpty(false)
+                .doOnSuccess(c -> log.info("{}님 대기 큐 존재 여부 : {}", userId, c));
     }
 }
