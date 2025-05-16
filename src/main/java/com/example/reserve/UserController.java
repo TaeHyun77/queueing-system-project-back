@@ -2,11 +2,14 @@ package com.example.reserve;
 
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
+import java.time.Instant;
 
+@Slf4j
 @RequiredArgsConstructor
 @RequestMapping("/user")
 @RestController
@@ -19,9 +22,22 @@ public class UserController {
     @PostMapping("/enter")
     public Mono<?> registerUser(@RequestParam(name = "user_id") String userId,
                                 @RequestParam(name = "queueType", defaultValue = "reserve") String queueType){
-        return userService.registerUser(userId, queueType);
+
+        long enterTimestamp = Instant.now().getEpochSecond();
+
+        return userService.registerUserToWaitQueue(userId, queueType, enterTimestamp);
     }
 
+    // 새로고침 시 대기열 재등록
+    @PostMapping("/reEnter")
+    public Mono<Void> reEnterQueue(@RequestParam(name = "user_id") String user_id,
+                                   @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
+
+        log.info("reEnter 호출 완료");
+        return userService.reEnterWaitQueue(user_id, queueType);
+    }
+
+    // 대기열에 사용자 존재 유무 확인
     @GetMapping("/isExist")
     public Mono<Boolean> isExistUserInQueue(@RequestParam(name = "user_id") String userId,
                                             @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
@@ -32,7 +48,14 @@ public class UserController {
     @DeleteMapping("/cancel")
     public Mono<Void> cancelUser(@RequestParam(name = "user_id") String userId,
                                                  @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
-        return userService.cancelUser(userId, queueType);
+        return userService.cancelWaitUser(userId, queueType);
+    }
+
+    // 허용큐 삭제
+    @DeleteMapping("/remove/allow")
+    public Mono<Void> removeAllowUser(@RequestParam(name = "user_id") String userId,
+                                 @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
+        return userService.removeAllowUser(userId, queueType);
     }
 
     // 사용자 랭킹 조회
