@@ -83,24 +83,19 @@ public class QueueSseController {
                                         }
                                         return Mono.just(ServerSentEvent.builder(json).build());
                                     } else {
-
-                                        return userService.isExistUserInQueue(userId, queueType)
-                                                .filter(Boolean::booleanValue) // true일 때만 통과 -> 대기열에 사용자가 존재하는 경우
-                                                .flatMap(exist ->
-                                                        userService.searchUserRanking(userId, queueType)
-                                                                .map(rank -> {
-                                                                    String json;
-                                                                    try {
-                                                                        json = objectMapper.writeValueAsString(Map.of(
-                                                                                "event", "update",
-                                                                                "rank", rank
-                                                                        ));
-                                                                    } catch (JsonProcessingException ex2) {
-                                                                        throw new RuntimeException(ex2);
-                                                                    }
-                                                                    return ServerSentEvent.builder(json).build();
-                                                                })
-                                                );
+                                        return userService.searchUserRanking(userId, queueType)
+                                                .map(rank -> {
+                                                    String json = null;
+                                                    try {
+                                                        json = objectMapper.writeValueAsString(Map.of(
+                                                                "event", "update",
+                                                                "rank", rank
+                                                        ));
+                                                    } catch (JsonProcessingException ex) {
+                                                        throw new RuntimeException(ex);
+                                                    }
+                                                    return ServerSentEvent.builder(json).build();
+                                                });
                                     }
                                 })
                 );

@@ -10,13 +10,16 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -34,23 +37,70 @@ public class UserService {
     /**
     * 대기열 등록
     * */
-    public Mono<Long> registerUser(String userId, String queueType){
+    public Mono<Long> registerUserToWaitQueue(String userId, String queueType, long enterTimestamp) {
 
-        long enterTimestamp = Instant.now().getEpochSecond();
+        // 대기열에 사용자 존재 여부
+        Mono<Boolean> existsInWaitQueue = reactiveRedisTemplate.opsForZSet()
+                .rank(queueType + WAIT_QUEUE, userId)
+                .map(rank -> true)
+                .defaultIfEmpty(false);
 
-        return reactiveRedisTemplate.opsForZSet().add(queueType + WAIT_QUEUE, userId, enterTimestamp)
-                .filter(i -> i)
-                .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER)))
-                .flatMap(i -> {
-                    eventPublisher.publishEvent(new QueueUpdateEvent(queueType));
-                    return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId);
-                })
-                .map(i -> i >= 0 ? i+1 : i)
-                .doOnSuccess(result -> log.info("{}님 {}번째로 사용자 대기열 등록 성공", userId, result));
+        // 참가열에 사용자 존재 여부
+        Mono<Boolean> existsInAllowQueue = reactiveRedisTemplate.opsForZSet()
+                .rank(queueType + ALLOW_QUEUE, userId)
+                .map(rank -> true)
+                .defaultIfEmpty(false);
+
+        // 대기열이나 참가열에 동일한 사용자가 있다면 대기열 등록 x, 중복 등록을 막기 위함
+        return Mono.zip(existsInWaitQueue, existsInAllowQueue)
+                .flatMap(tuple -> {
+                    boolean inWait = tuple.getT1();
+                    boolean inAllow = tuple.getT2();
+
+                    if (inWait || inAllow) {
+                        return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER));
+                    }
+
+                    // 중복 없으면 등록 진행
+                    return reactiveRedisTemplate.opsForZSet()
+                            .add(queueType + WAIT_QUEUE, userId, enterTimestamp)
+                            .filter(i -> i)
+                            .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER)))
+                            .flatMap(i -> {
+                                eventPublisher.publishEvent(new QueueUpdateEvent(queueType));
+                                return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId);
+                            })
+                            .map(i -> i >= 0 ? i + 1 : i)
+                            .doOnSuccess(result -> log.info("{}님 {}번째로 사용자 대기열 등록 성공", userId, result));
+                });
     }
 
     /**
-    * 사용자의 순위 조회
+    * 새로고침 시 대기열 재등록 로직
+    * */
+    public Mono<Void> reEnterWaitQueue(String userId, String queueType) {
+
+        long newTimestamp = Instant.now().getEpochSecond(); // 현재 시각, 새로고침 시 대기열 후순위 설정을 위함
+
+        return reactiveRedisTemplate.opsForZSet()
+                .add(queueType + WAIT_QUEUE, userId, newTimestamp)
+                .then(Mono.fromRunnable(() -> eventPublisher.publishEvent(new QueueUpdateEvent(queueType))))
+                .then();
+    }
+
+    /**
+     * 대기열에 사용자 존재 여부 파악
+    * */
+    public Mono<Boolean> isExistUserInQueue(String userId, String queueType) {
+
+        return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId)
+                .map(rank -> true) // 존재하면 true
+                .defaultIfEmpty(false)
+                .doOnSuccess(c -> log.info("{}님 대기 큐 존재 여부 : {}", userId, c));
+    }
+
+    /**
+    * 대기열의 사용자 순위 조회
     * */
     public Mono<Long> searchUserRanking(String userId, String queueType) {
 
@@ -60,7 +110,6 @@ public class UserService {
                         // 허용된 유저는 프론트에서 따로 처리
                         return Mono.just(-1L);
                     }
-
                     return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId)
                             .flatMap(rank -> {
                                 if (rank == null) {
@@ -72,7 +121,7 @@ public class UserService {
                 })
                 .doOnSuccess(result -> {
                     if (result == null) {
-                        log.info("사용자 순위 조회 실패 !");
+                        log.info("사용자가 대기열에 없습니다 !");
                     } else if (result == -1L) {
                         log.info("{}님은 허용큐에 있어 순위 조회 불필요", userId);
                     } else {
@@ -82,15 +131,24 @@ public class UserService {
     }
 
     /**
-    * 대기큐에 있는 상위 count 명을 허용큐로 옮기고, 토큰을 생성하여 redis에 저장 ( 유효 기간 10분 )
-    * */
+    * 대기열에 있는 상위 count 명을 허용큐로 옮기고, 토큰을 생성하여 redis에 저장 ( 유효 기간 10분 )
+    */
     public Mono<Long> allowUser(String queueType, Long count) {
-        return reactiveRedisTemplate.opsForZSet().popMin(queueType + WAIT_QUEUE, count)
+
+        return reactiveRedisTemplate.opsForZSet()
+                .popMin(queueType + WAIT_QUEUE, count)
                 .flatMap(member -> {
                     String userId = member.getValue();
+                    long timestamp = Instant.now().getEpochSecond();
+                    String tokenKey = "token:" + userId + ":TTL";
 
+                    // 허용큐 추가 + 토큰 저장 (TTL 10분)
                     return reactiveRedisTemplate.opsForZSet()
-                            .add(queueType + ALLOW_QUEUE, member.getValue(), Instant.now().getEpochSecond())
+                            .add(queueType + ALLOW_QUEUE, userId, timestamp)
+                            .then(
+                                    reactiveRedisTemplate.opsForValue()
+                                            .set(tokenKey, "allowed", Duration.ofMinutes(10))
+                            )
                             .thenReturn(userId);
                 })
                 .count()
@@ -109,9 +167,9 @@ public class UserService {
     }
 
     /**
-     * 대기큐 등록 삭제
+     * 대기열 등록 삭제
     * */
-    public Mono<Void> cancelUser(String userId, String queueType) {
+    public Mono<Void> cancelWaitUser(String userId, String queueType) {
 
         log.info("cancel userId : {}", userId);
 
@@ -126,7 +184,84 @@ public class UserService {
                 .doOnSuccess(v -> log.info("{}님 대기열에서 취소 완료", userId));
     }
 
-/*    @Scheduled(fixedDelay = 3000, initialDelay = 20000) // 실행 20초 후부터 3초마다 스케줄링
+    /**
+     * 대기열 등록 삭제
+     * */
+    public Mono<Void> removeAllowUser(String userId, String queueType) {
+
+        log.info("cancel allow userId : {}", userId);
+
+        return reactiveRedisTemplate.opsForZSet().remove(queueType + ALLOW_QUEUE, userId)
+                .flatMap(removedCount -> {
+                    if (removedCount == 0) {
+                        return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE));
+                    }
+                    return Mono.<Void>empty();
+                })
+                .doOnSuccess(v -> log.info("{}님 허용큐에서 삭제 완료", userId));
+    }
+
+    /**
+     * 토큰 유효성 검사
+    * */
+    public Mono<Boolean> isAccessTokenValid(String userId, String queueType, String token) {
+        String tokenKey = "token:" + userId + ":TTL";
+
+        return reactiveRedisTemplate.opsForValue()
+                .get(tokenKey) // Redis에서 저장된 사용자의 TTL 정보 가져오기
+                .flatMap(storedToken -> {
+                    if (storedToken == null) {
+                        return Mono.just(false); // TTL 만료됨
+                    }
+
+                    // TTL이 만료되지 않았다면
+                    return generateAccessToken(userId, queueType)
+                            .map(generatedToken -> generatedToken.equals(token));
+                })
+                .defaultIfEmpty(false); // 키 자체가 아예 없을 경우
+    }
+
+    /**
+    * 유효성 검사를 위한 토큰 생성
+    * */
+    public static Mono<String> generateAccessToken(String userId, String queueType) {
+        try {
+            // MessageDigest : 해시 알고리즘 사용을 위한 클래스
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            String raw = queueType + ACCESS_TOKEN + userId;
+            byte[] hash = digest.digest(raw.getBytes(StandardCharsets.UTF_8));
+
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hash) hex.append(String.format("%02x", b));
+
+            return Mono.just(hex.toString());
+        } catch (NoSuchAlgorithmException e) {
+            return Mono.error(new RuntimeException("Token 생성 실패", e));
+        }
+    }
+
+    /**
+    * 쿠키에 생성한 토큰을 저장
+    * */
+    public Mono<ResponseEntity<String>> sendCookie(String userId, String queueType, HttpServletResponse response) {
+
+        log.info("userId : {}", userId);
+        String encodedName = URLEncoder.encode(userId, StandardCharsets.UTF_8);
+
+        return UserService.generateAccessToken(userId, queueType)
+                .map(token -> {
+                    Cookie cookie = new Cookie(queueType + "_user-access-cookie_" + encodedName, token);
+                    cookie.setPath("/");
+                    cookie.setMaxAge(300);
+                    response.addCookie(cookie);
+                    return ResponseEntity.ok("쿠키 발급 완료");
+                });
+    }
+
+    /**
+     * 대기열의 사용자를 허용큐로 maxAllowedUsers 명 옮기는 scheduling 코드
+     * */
+    @Scheduled(fixedDelay = 5000, initialDelay = 30000) // 실행 10초 후부터 3초마다 스케줄링
     public void moveUserToAllowQ() {
         Long maxAllowedUsers = 3L;
 
@@ -145,52 +280,5 @@ public class UserService {
                     })
                     .subscribe(); // 반드시 subscribe() 호출해야 비동기 실행됨
         });
-    }*/
-
-    // 토큰의 유효성 검사
-    public Mono<Boolean> isAccessTokenValid(String userId, String queueType, String token) {
-
-        return generateAccessToken(userId, queueType)
-                .map(storedToken -> storedToken.equals(token))
-                .defaultIfEmpty(false);
-    }
-
-    // 유효성 검사를 위한 토큰 생성
-    public static Mono<String> generateAccessToken(String userId, String queueType) {
-        try {
-            // MessageDigest : 해시 알고리즘 사용을 위한 클래스
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            String raw = queueType + ACCESS_TOKEN + userId;
-            byte[] hash = digest.digest(raw.getBytes(StandardCharsets.UTF_8));
-
-            StringBuilder hex = new StringBuilder();
-            for (byte b : hash) hex.append(String.format("%02x", b));
-
-            return Mono.just(hex.toString());
-        } catch (NoSuchAlgorithmException e) {
-            return Mono.error(new RuntimeException("Token 생성 실패", e));
-        }
-    }
-
-    public Mono<ResponseEntity<String>> sendCookie(String userId, String queueType, HttpServletResponse response) {
-
-        String encodedName = URLEncoder.encode(userId, StandardCharsets.UTF_8);
-
-        return UserService.generateAccessToken(userId, queueType)
-                .map(token -> {
-                    Cookie cookie = new Cookie(queueType + "_user-access-cookie_" + encodedName, token);
-                    cookie.setPath("/");
-                    cookie.setMaxAge(300);
-                    response.addCookie(cookie);
-                    return ResponseEntity.ok("쿠키 발급 완료");
-                });
-    }
-
-    public Mono<Boolean> isExistUserInQueue(String userId, String queueType) {
-
-        return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId)
-                .map(rank -> true) // 존재하면 true
-                .defaultIfEmpty(false)
-                .doOnSuccess(c -> log.info("{}님 대기 큐 존재 여부 : {}", userId, c));
     }
 }
