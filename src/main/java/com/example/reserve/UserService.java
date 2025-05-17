@@ -94,9 +94,9 @@ public class UserService {
     public Mono<Boolean> isExistUserInQueue(String userId, String queueType) {
 
         return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId)
-                .map(rank -> true) // 존재하면 true
+                .map(rank -> true) // 존재하면 true, 존재하지 않으면 Mono.empty() 반환
                 .defaultIfEmpty(false)
-                .doOnSuccess(c -> log.info("{}님 대기 큐 존재 여부 : {}", userId, c));
+                .doOnSuccess(c -> log.info("{}님 대기열 존재 여부 : {}", userId, c));
     }
 
     /**
@@ -107,7 +107,7 @@ public class UserService {
         return isAllowedUser(queueType, userId)
                 .flatMap(allowed -> {
                     if (allowed) {
-                        // 허용된 유저는 프론트에서 따로 처리
+                        // 참가열에 존재하는 유저는 프론트에서 따로 처리
                         return Mono.just(-1L);
                     }
                     return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId)
@@ -123,7 +123,7 @@ public class UserService {
                     if (result == null) {
                         log.info("사용자가 대기열에 없습니다 !");
                     } else if (result == -1L) {
-                        log.info("{}님은 허용큐에 있어 순위 조회 불필요", userId);
+                        log.info("{}님은 참가열에 있어 순위 조회 불필요", userId);
                     } else {
                         log.info("{}님의 순위 : {}번째", userId, result);
                     }
@@ -131,7 +131,7 @@ public class UserService {
     }
 
     /**
-    * 대기열에 있는 상위 count 명을 허용큐로 옮기고, 토큰을 생성하여 redis에 저장 ( 유효 기간 10분 )
+    * 대기열에 있는 상위 count 명을 참가열로 옮기고, 토큰을 생성하여 redis에 저장 ( 유효 기간 10분 )
     */
     public Mono<Long> allowUser(String queueType, Long count) {
 
@@ -142,7 +142,7 @@ public class UserService {
                     long timestamp = Instant.now().getEpochSecond();
                     String tokenKey = "token:" + userId + ":TTL";
 
-                    // 허용큐 추가 + 토큰 저장 (TTL 10분)
+                    // 참가열 추가 + 토큰 저장 (TTL 10분)
                     return reactiveRedisTemplate.opsForZSet()
                             .add(queueType + ALLOW_QUEUE, userId, timestamp)
                             .then(
@@ -152,17 +152,17 @@ public class UserService {
                             .thenReturn(userId);
                 })
                 .count()
-                .doOnSuccess(allowedCount -> log.info("허용큐로 이동된 사용자 수: {}", allowedCount));
+                .doOnSuccess(allowedCount -> log.info("참가열로 이동된 사용자 수: {}", allowedCount));
     }
 
     /**
-     * 허용큐 내부에서 특정 사용자가 입장 가능한지 여부 파악
+     * 참가열 내부에서 특정 사용자가 입장 가능한지 여부 파악
     * */
     public Mono<Boolean> isAllowedUser(String userId, String queueType) {
 
-        // 사용자가 허용 큐에 있다면 순위 반환 ( 0부터 ~ )
+        // 사용자가 참가열에 있다면 순위 반환 ( 0부터 ~ )
         return reactiveRedisTemplate.opsForZSet().rank(queueType + ALLOW_QUEUE, userId)
-                .defaultIfEmpty( -1L) // 사용자가 허용 큐에 없으면 -1로 대체
+                .defaultIfEmpty( -1L) // 사용자가 참가열에 없으면 -1로 대체
                 .map(rank -> rank >= 0);
     }
 
@@ -198,7 +198,7 @@ public class UserService {
                     }
                     return Mono.<Void>empty();
                 })
-                .doOnSuccess(v -> log.info("{}님 허용큐에서 삭제 완료", userId));
+                .doOnSuccess(v -> log.info("{}님 참가열에서 삭제 완료", userId));
     }
 
     /**
@@ -259,7 +259,7 @@ public class UserService {
     }
 
     /**
-     * 대기열의 사용자를 허용큐로 maxAllowedUsers 명 옮기는 scheduling 코드
+     * 대기열의 사용자를 참가열로 maxAllowedUsers 명 옮기는 scheduling 코드
      * */
     @Scheduled(fixedDelay = 5000, initialDelay = 30000) // 실행 10초 후부터 3초마다 스케줄링
     public void moveUserToAllowQ() {
@@ -278,7 +278,7 @@ public class UserService {
                             log.info("No users to move for queue [{}]", queueType);
                         }
                     })
-                    .subscribe(); // 반드시 subscribe() 호출해야 비동기 실행됨
+                    .subscribe(); // Mono, Flux 반환형이 아니므로 직접 호출해줘야 함
         });
     }
 }

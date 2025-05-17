@@ -41,12 +41,15 @@ public class QueueSseController {
                         .flatMap(allowed -> {
                             String json;
                             try {
+                                // 사용자가 참가열에 있는 경우 사용자명 변환
                                 if (allowed) {
                                     json = objectMapper.writeValueAsString(Map.of(
                                             "event", "confirmed",
                                             "user_id", userId
                                     ));
                                     return Mono.just(ServerSentEvent.builder(json).build());
+
+                                // 사용자가 대기열에 있는 경우 순위 반환
                                 } else {
                                     return userService.searchUserRanking(userId, queueType)
                                             .map(rank -> {
@@ -102,8 +105,5 @@ public class QueueSseController {
 
         return Flux.merge(initialEvent, streamEvents);
     }
-
-
-
 }
 
