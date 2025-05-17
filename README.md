@@ -172,6 +172,6 @@ BE : SpringBoot, Spring Webflux
 
 FE : React.js, JavaScript
 
-DB : Redis sorted set
+DB : Redis의 sorted set
 
-Etc : sse
+Etc : sse 통신
