@@ -28,7 +28,31 @@ public class UserController {
         return userService.registerUserToWaitQueue(userId, queueType, enterTimestamp);
     }
 
-    // 새로고침 시 대기열 재등록
+    // 대기열 or 참가열에서 사용자 존재 유무 확인
+    @GetMapping("/isExist")
+    public Mono<Boolean> isExistUserInQueue(@RequestParam(name = "user_id") String userId,
+                                            @RequestParam(name = "queueType", defaultValue = "reserve") String queueType,
+                                            @RequestParam(name = "queueCategory") String queueCategory) {
+        return userService.isExistUserInWaitOrAllow(userId, queueType, queueCategory);
+    }
+
+    // 대기열 or 참가열에서 사용자 순위 조회
+    @GetMapping("/search/ranking")
+    public Mono<Long> searchUserRanking(@RequestParam(name = "user_id") String userId,
+                                        @RequestParam(name = "queueType", defaultValue = "reserve") String queueType,
+                                        @RequestParam(name = "queueCategory") String queueCategory) {
+        return userService.searchUserRanking(userId, queueType, queueCategory);
+    }
+
+    // 대기열 or 참가열에서 사용자 제거
+    @DeleteMapping("/cancel")
+    public Mono<Void> cancelUser(@RequestParam(name = "user_id") String userId,
+                                 @RequestParam(name = "queueType", defaultValue = "reserve") String queueType,
+                                 @RequestParam(name = "queueCategory") String queueCategory) {
+        return userService.cancelWaitUser(userId, queueType, queueCategory);
+    }
+
+    // 새로고침 시 대기열 후순위 재등록
     @PostMapping("/reEnter")
     public Mono<Void> reEnterQueue(@RequestParam(name = "user_id") String user_id,
                                    @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
@@ -37,46 +61,11 @@ public class UserController {
         return userService.reEnterWaitQueue(user_id, queueType);
     }
 
-    // 대기열에 사용자 존재 유무 확인
-    @GetMapping("/isExist")
-    public Mono<Boolean> isExistUserInQueue(@RequestParam(name = "user_id") String userId,
-                                            @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
-        return userService.isExistUserInQueue(userId, queueType);
-    }
-
-    // 대기열 취소
-    @DeleteMapping("/cancel")
-    public Mono<Void> cancelUser(@RequestParam(name = "user_id") String userId,
-                                                 @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
-        return userService.cancelWaitUser(userId, queueType);
-    }
-
-    // 허용큐 삭제
-    @DeleteMapping("/remove/allow")
-    public Mono<Void> removeAllowUser(@RequestParam(name = "user_id") String userId,
-                                 @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
-        return userService.removeAllowUser(userId, queueType);
-    }
-
-    // 사용자 랭킹 조회
-    @GetMapping("/search/ranking")
-    public Mono<Long> searchUserRanking(@RequestParam(name = "user_id") String userId,
-                                     @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
-        return userService.searchUserRanking(userId, queueType);
-    }
-
-    // 허용 큐 이동
+    // 대기열 상위 count명을 참가열 이동
     @PostMapping("/allow")
     public Mono<?> allowUser(@RequestParam(name = "queueType", defaultValue = "reserve") String queueType,
                              @RequestParam(name = "count") Long count) {
         return userService.allowUser(queueType, count);
-    }
-
-    // 진입 여부 확인
-    @GetMapping("/isAllowed")
-    public Mono<Boolean> isAllowedUser(@RequestParam(name = "user_id") String userId,
-                                       @RequestParam(name = "queueType", defaultValue = "reserve") String queueType) {
-        return userService.isAllowedUser(userId, queueType);
     }
 
     // 토큰 유효성 확인
