@@ -37,7 +37,7 @@ public class QueueSseController {
 
         // 최초 연결 시
         Mono<ServerSentEvent<String>> initialEvent =
-                userService.isAllowedUser(userId, queueType)
+                userService.isExistUserInWaitOrAllow(userId, queueType, "allow")
                         .flatMap(allowed -> {
                             String json;
                             try {
@@ -51,7 +51,7 @@ public class QueueSseController {
 
                                 // 사용자가 대기열에 있는 경우 순위 반환
                                 } else {
-                                    return userService.searchUserRanking(userId, queueType)
+                                    return userService.searchUserRanking(userId, queueType, "wait")
                                             .map(rank -> {
                                                 try {
                                                     String updateJson = objectMapper.writeValueAsString(Map.of(
@@ -73,7 +73,7 @@ public class QueueSseController {
         Flux<ServerSentEvent<String>> streamEvents = sink.asFlux()
                 .filter(e -> e.getQueueType().equals(queueType))
                 .flatMap(e ->
-                        userService.isAllowedUser(userId, queueType)
+                        userService.isExistUserInWaitOrAllow(userId, queueType, "allow")
                                 .flatMap(allowed -> {
                                     if (allowed) {
                                         String json = null;
@@ -86,7 +86,7 @@ public class QueueSseController {
                                         }
                                         return Mono.just(ServerSentEvent.builder(json).build());
                                     } else {
-                                        return userService.searchUserRanking(userId, queueType)
+                                        return userService.searchUserRanking(userId, queueType, "wait")
                                                 .map(rank -> {
                                                     String json = null;
                                                     try {
