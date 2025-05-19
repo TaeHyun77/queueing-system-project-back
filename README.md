@@ -174,4 +174,8 @@ FE : React.js, JavaScript
 
 DB : Redis의 sorted set
 
-Etc : sse 통신
+Etc : sse 통신<br><br>
+
+### 구현 과정<br>
+
+https://velog.io/@ayeah77/posts
