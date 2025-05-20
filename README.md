@@ -179,3 +179,11 @@ Etc : sse 통신<br><br>
 ### 구현 과정<br>
 
 https://velog.io/@ayeah77/posts
+
+### Spring 통합 테스트
+
+https://velog.io/@ayeah77/%EB%8C%80%EA%B8%B0%EC%97%B4-%EC%8B%9C%EC%8A%A4%ED%85%9C-%ED%85%8C%EC%8A%A4%ED%8A%B8%EC%BD%94%EB%93%9C-%EC%9E%91%EC%84%B1
+
+### JMeter 테스트
+
+https://velog.io/@ayeah77/%EB%8C%80%EA%B8%B0%EC%97%B4-%EC%8B%9C%EC%8A%A4%ED%85%9C-JMeter-%ED%85%8C%EC%8A%A4%ED%8A%B8
