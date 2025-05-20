@@ -16,14 +16,13 @@ import java.time.Instant;
 public class UserController {
 
     private final UserService userService;
-    private final Sinks.Many<String> sink = Sinks.many().multicast().onBackpressureBuffer();
 
     // 대기열 등록
     @PostMapping("/enter")
     public Mono<?> registerUser(@RequestParam(name = "user_id") String userId,
                                 @RequestParam(name = "queueType", defaultValue = "reserve") String queueType){
 
-        long enterTimestamp = Instant.now().getEpochSecond();
+        long enterTimestamp = Instant.now().toEpochMilli();
 
         return userService.registerUserToWaitQueue(userId, queueType, enterTimestamp);
     }
