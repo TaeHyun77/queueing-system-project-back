@@ -206,7 +206,7 @@ public class UserService {
      * */
     public Mono<Void> reEnterWaitQueue(String userId, String queueType) {
 
-        long newTimestamp = Instant.now().getEpochSecond(); // 현재 시각, 새로고침 시 대기열 후순위 설정을 위함
+        long newTimestamp = Instant.now().toEpochMilli(); // 현재 시각, 새로고침 시 대기열 후순위 설정을 위함
 
         return reactiveRedisTemplate.opsForZSet()
                 .add(queueType + WAIT_QUEUE, userId, newTimestamp)
@@ -223,7 +223,7 @@ public class UserService {
                 .popMin(queueType + WAIT_QUEUE, count)
                 .flatMap(member -> {
                     String userId = member.getValue();
-                    long timestamp = Instant.now().getEpochSecond();
+                    long timestamp = Instant.now().toEpochMilli();
                     String tokenKey = "token:" + userId + ":TTL";
 
                     // 참가열 추가 + 토큰 저장 (TTL 10분)

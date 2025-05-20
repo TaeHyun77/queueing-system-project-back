@@ -35,46 +35,48 @@ public class UserEnterTest {
     }
 
     @Test
-    void registerWaitQueue_등록테스트() {
-        StepVerifier.create(userService.registerWaitQueue(1L, "reserve"))
+    void 대기열_사용자_등록_테스트() {
+
+        StepVerifier.create(userService.registerUserToWaitQueue("1번", "reserve", Instant.now().getEpochSecond()))
                 .expectNext(1L)
                 .verifyComplete();
 
-        StepVerifier.create(userService.registerWaitQueue(2L, "reserve"))
+        StepVerifier.create(userService.registerUserToWaitQueue("2번", "reserve", Instant.now().getEpochSecond()))
                 .expectNext(2L)
                 .verifyComplete();
 
-        StepVerifier.create(userService.registerWaitQueue(3L, "reserve"))
+        StepVerifier.create(userService.registerUserToWaitQueue("3번", "reserve", Instant.now().getEpochSecond()))
                 .expectNext(3L)
                 .verifyComplete();
 
         // 예외 발생 테스트
-        StepVerifier.create(userService.registerWaitQueue(1L, "reserve"))
+        StepVerifier.create(userService.registerUserToWaitQueue("1번", "reserve", Instant.now().getEpochSecond()))
                 .expectError(ReserveException.class)
                 .verify();
     }
 
     @Test
-    void registerAndCheck_등록_및_조회테스트() {
-        StepVerifier.create(userService.registerWaitQueue(1L, "reserve"))
+    void 대기열_사용자_조회_테스트() {
+
+        StepVerifier.create(userService.registerUserToWaitQueue("1번", "reserve", Instant.now().getEpochSecond()))
                 .expectNext(1L)
                 .verifyComplete();
 
-        StepVerifier.create(userService.registerWaitQueue(2L, "reserve"))
+        StepVerifier.create(userService.registerUserToWaitQueue("2번", "reserve", Instant.now().getEpochSecond()))
                 .expectNext(2L)
                 .verifyComplete();
 
-        StepVerifier.create(userService.registerWaitQueue(3L, "reserve"))
+        StepVerifier.create(userService.registerUserToWaitQueue("3번", "reserve", Instant.now().getEpochSecond()))
                 .expectNext(3L)
                 .verifyComplete();
 
         // 조회 테스트
-        StepVerifier.create(userService.searchUserRanking(1L, "reserve"))
+        StepVerifier.create(userService.searchUserRanking("1번", "reserve", "wait"))
                 .expectNext(1L)
                 .verifyComplete();
 
         // 예외 발생 테스트
-        StepVerifier.create(userService.searchUserRanking(100L, "reserve"))
+        StepVerifier.create(userService.searchUserRanking("조회예외발생테스트", "reserve", "wait"))
                 .expectErrorMatches(throwable ->
                         throwable instanceof ReserveException &&
                                 ((ReserveException) throwable).getErrorCode() == ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE
@@ -83,52 +85,68 @@ public class UserEnterTest {
     }
 
     @Test
-    void allowUser_이동_테스트() {
+    void 대기열_사용자_삭제_테스트() {
+
+        StepVerifier.create(userService.registerUserToWaitQueue("1번", "reserve", Instant.now().getEpochSecond()))
+                .expectNext(1L)
+                .verifyComplete();
+
+        StepVerifier.create(userService.registerUserToWaitQueue("2번", "reserve", Instant.now().getEpochSecond()))
+                .expectNext(2L)
+                .verifyComplete();
+
+        StepVerifier.create(userService.registerUserToWaitQueue("3번", "reserve", Instant.now().getEpochSecond()))
+                .expectNext(3L)
+                .verifyComplete();
+
+        StepVerifier.create(userService.cancelWaitUser("1번", "reserve", "wait"))
+                .verifyComplete();
+
+        StepVerifier.create(reactiveRedisTemplate.opsForZSet().size("reserve" + WAIT_QUEUE))
+                .expectNext(2L).verifyComplete();
+    }
+
+    @Test
+    void 참가열_이동_및_참가열_사용자_삭제_테스트() {
         String queueType = "reserve";
 
-        // 대기큐 등록
-        StepVerifier.create(userService.registerWaitQueue(1L, queueType)).expectNext(1L).verifyComplete();
-        StepVerifier.create(userService.registerWaitQueue(2L, queueType)).expectNext(2L).verifyComplete();
-        StepVerifier.create(userService.registerWaitQueue(3L, queueType)).expectNext(3L).verifyComplete();
+        // 대기열 등록
+        StepVerifier.create(userService.registerUserToWaitQueue("1번", "reserve", Instant.now().getEpochSecond()))
+                .expectNext(1L)
+                .verifyComplete();
 
-        // 허용큐로 2명 이동
+        StepVerifier.create(userService.registerUserToWaitQueue("2번", "reserve", Instant.now().getEpochSecond()))
+                .expectNext(2L)
+                .verifyComplete();
+
+        StepVerifier.create(userService.registerUserToWaitQueue("3번", "reserve", Instant.now().getEpochSecond()))
+                .expectNext(3L)
+                .verifyComplete();
+
+        // 참가열로 2명 이동
         StepVerifier.create(userService.allowUser(queueType, 2L))
                 .expectNext(2L)
                 .verifyComplete();
 
-        // 허용큐에 1번, 2번 존재 확인
+        // 참가열에 1번, 2번 존재 확인
         StepVerifier.create(
-                reactiveRedisTemplate.opsForZSet().rank(queueType + ALLOW_QUEUE, "1")
+                reactiveRedisTemplate.opsForZSet().rank(queueType + ALLOW_QUEUE, "1번")
         ).expectNextMatches(Objects::nonNull).verifyComplete();
 
         StepVerifier.create(
-                reactiveRedisTemplate.opsForZSet().rank(queueType + ALLOW_QUEUE, "2")
+                reactiveRedisTemplate.opsForZSet().rank(queueType + ALLOW_QUEUE, "2번")
         ).expectNextMatches(Objects::nonNull).verifyComplete();
 
-        // 대기큐에 남은 인원 1명 확인 (3번)
+        // 대기열에 남은 인원 1명 확인 (3번)
         StepVerifier.create(reactiveRedisTemplate.opsForZSet().size(queueType + WAIT_QUEUE))
                 .expectNext(1L).verifyComplete();
-    }
 
-    @Test
-    void testIsAllowedUser() {
-        String queueType = "reserve";
-        Long userId = 1L;
-
-        // 허용 큐에 사용자 등록
-        reactiveRedisTemplate.opsForZSet()
-                .add(queueType + ALLOW_QUEUE, userId.toString(), Instant.now().getEpochSecond())
-                .block();
-
-        StepVerifier.create(userService.isAllowedUser(queueType, userId))
-                .expectNext(true)
+        // 참가열에서 1번 삭제
+        StepVerifier.create(userService.cancelWaitUser("1번", "reserve", "allow"))
                 .verifyComplete();
 
-        // 존재하지 않는 사용자에 대한 확인
-        StepVerifier.create(userService.isAllowedUser(queueType, 999L))
-                .expectNext(false)
-                .verifyComplete();
+        // 참가열에 남은 인원 1명 확인
+        StepVerifier.create(reactiveRedisTemplate.opsForZSet().size(queueType + ALLOW_QUEUE))
+                .expectNext(1L).verifyComplete();
     }
-
-
 }
