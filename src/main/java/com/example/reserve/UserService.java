@@ -35,8 +35,8 @@ public class UserService {
     public static final String ACCESS_TOKEN = ":user-access:";
 
     /**
-    * 대기열 등록
-    * */
+     * 대기열 등록
+     * */
     public Mono<Long> registerUserToWaitQueue(String userId, String queueType, long enterTimestamp) {
 
         // 대기열에 사용자 존재 여부
@@ -84,34 +84,27 @@ public class UserService {
     }
 
     /**
-    * 대기열 or 참가열에서 사용자 순위 조회
-    * */
+     * 대기열 or 참가열에서 사용자 순위 조회
+     * */
     public Mono<Long> searchUserRanking(String userId, String queueType, String queueCategory) {
-
         String keyType = queueCategory.equals("wait") ? WAIT_QUEUE : ALLOW_QUEUE;
 
         return reactiveRedisTemplate.opsForZSet()
                 .rank(queueType + keyType, userId)
-                .defaultIfEmpty(-1L)
-                .flatMap(rank -> {
-                    if (rank == -1) {
-                        return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE));
-                    }
-
-                    return Mono.just(rank + 1);
-                })
-                .doOnSuccess(rank -> {
-                    if (rank == -1) {
-                        log.info("{}에 {}님이 존재하지 않습니다, 사용자 순위 반환 실패 !", queueCategory.equals("wait") ? "대기열" : "참가열", userId);
+                .defaultIfEmpty(-1L) // 사용자가 없으면 -1 반환
+                .map(rank -> rank + 1) // 사용자 순위는 0부터 시작하므로 +1
+                .doOnNext(rank -> {
+                    if (rank <= 0) {
+                        log.warn("[{}] {}님이 존재하지 않습니다. 순위: {}", queueCategory, userId, rank);
                     } else {
-                        log.info("{}에서 {}님의 순위 : {} ", queueCategory.equals("wait") ? "대기열" : "참가열", userId, rank);
+                        log.info("[{}] {}님의 현재 순위는 {}번입니다.", queueCategory, userId, rank);
                     }
                 });
     }
 
     /**
      * 대기열 or 참가열에서 사용자 등록된 사용자 제거
-    * */
+     * */
     public Mono<Void> cancelWaitUser(String userId, String queueType, String queueCategory) {
 
         log.info("{}에서 삭제된 사용자 : {}", queueCategory, userId);
@@ -145,8 +138,8 @@ public class UserService {
     }
 
     /**
-    * 유효성 검사를 위한 토큰 생성
-    * */
+     * 유효성 검사를 위한 토큰 생성
+     * */
     public static Mono<String> generateAccessToken(String userId, String queueType) {
         try {
             // MessageDigest : 해시 알고리즘 사용을 위한 클래스
@@ -184,8 +177,8 @@ public class UserService {
     }
 
     /**
-    * 쿠키에 생성한 토큰을 저장
-    * */
+     * 쿠키에 생성한 토큰을 저장
+     * */
     public Mono<ResponseEntity<String>> sendCookie(String userId, String queueType, HttpServletResponse response) {
 
         log.info("userId : {}", userId);
@@ -223,6 +216,7 @@ public class UserService {
                 .popMin(queueType + WAIT_QUEUE, count)
                 .flatMap(member -> {
                     String userId = member.getValue();
+                    log.info("참가열 이동 사용자 : {}", userId);
                     long timestamp = Instant.now().toEpochMilli();
                     String tokenKey = "token:" + userId + ":TTL";
 
@@ -247,7 +241,7 @@ public class UserService {
         Long maxAllowedUsers = 3L;
 
         // 여러 종류의 대기 큐가 있다고 가정
-        List<String> queueTypes = List.of("reserve"); // 확장 가능하게
+        List<String> queueTypes = List.of("reserve"); // 추후 확장 가능하게
 
         queueTypes.forEach(queueType -> {
             allowUser(queueType, maxAllowedUsers)
@@ -256,7 +250,7 @@ public class UserService {
                             log.info("Moved {} users to the allow queue for [{}]", count, queueType);
                             eventPublisher.publishEvent(new QueueUpdateEvent(queueType));
                         } else {
-                            log.info("No users to move for queue [{}]", queueType);
+                            log.info("No users to move for queue [{}-wait → {}-allow ]", queueType, queueType);
                         }
                     })
                     .subscribe(); // Mono, Flux 반환형이 아니므로 직접 호출해줘야 함
