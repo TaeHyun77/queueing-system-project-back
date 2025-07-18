@@ -1,3 +1,31 @@
+### 구현
+
+---
+
+**사용 기술**
+
+BE : SpringBoot, Spring Webflux
+
+FE : React.js, JavaScript
+
+DB : Redis의 sorted set
+
+Etc : sse 통신<br><br>
+
+### 구현 과정<br>
+
+https://velog.io/@ayeah77/posts
+
+### Spring 통합 테스트
+
+https://velog.io/@ayeah77/%EB%8C%80%EA%B8%B0%EC%97%B4-%EC%8B%9C%EC%8A%A4%ED%85%9C-%ED%85%8C%EC%8A%A4%ED%8A%B8%EC%BD%94%EB%93%9C-%EC%9E%91%EC%84%B1
+
+### JMeter 테스트
+
+https://velog.io/@ayeah77/%EB%8C%80%EA%B8%B0%EC%97%B4-%EC%8B%9C%EC%8A%A4%ED%85%9C-JMeter-%ED%85%8C%EC%8A%A4%ED%8A%B8<br>
+
+https://velog.io/@ayeah77/%EB%8F%99%EA%B8%B0-%EB%B9%84%EB%8F%99%EA%B8%B0-%EB%B9%84%EA%B5%90<br><br>
+
 ### **요구사항**
 ---
 
@@ -160,30 +188,4 @@ Reactive Stream의 publish 인터페이스를 구현한 리액티브 타입인 M
 - 토큰이 서버의 검증을 통과하면, 사용자는 해당 타겟 페이지에 최종적으로 접근할 수 있게 되며, 유효하지 않거나 없는 경우에는 접근이 차단
 - 타겟 페이지에 이동했을 때 유효 시간을 10분으로 타이머가 진행되며 시간이 종료될 경우 자동으로 예약 등록 페이지로 이동
 
-+ 대기열에서 새로고침을 하게 되면 대기 순위가 가장 마지막으로 이동되는 로직을 구현<br><br>
-
-### 구현
-
----
-
-**사용 기술**
-
-BE : SpringBoot, Spring Webflux
-
-FE : React.js, JavaScript
-
-DB : Redis의 sorted set
-
-Etc : sse 통신<br><br>
-
-### 구현 과정<br>
-
-https://velog.io/@ayeah77/posts
-
-### Spring 통합 테스트
-
-https://velog.io/@ayeah77/%EB%8C%80%EA%B8%B0%EC%97%B4-%EC%8B%9C%EC%8A%A4%ED%85%9C-%ED%85%8C%EC%8A%A4%ED%8A%B8%EC%BD%94%EB%93%9C-%EC%9E%91%EC%84%B1
-
-### JMeter 테스트
-
-https://velog.io/@ayeah77/%EB%8C%80%EA%B8%B0%EC%97%B4-%EC%8B%9C%EC%8A%A4%ED%85%9C-JMeter-%ED%85%8C%EC%8A%A4%ED%8A%B8
++ 대기열에서 새로고침을 하게 되면 대기 순위가 가장 마지막으로 이동되는 로직을 구현
