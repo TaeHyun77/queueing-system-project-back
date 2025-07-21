@@ -2,6 +2,8 @@ package com.example.reserve;
 
 import com.example.reserve.exception.ErrorCode;
 import com.example.reserve.exception.ReserveException;
+import com.example.reserve.kafka.QueueMessage;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -10,9 +12,12 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
+
+import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -29,10 +34,28 @@ public class UserService {
     // Spring WebFlux 환경에서 비동기/논블로킹 방식으로 Redis에 접근
     private final ReactiveRedisTemplate<String, String> reactiveRedisTemplate;
     private final ApplicationEventPublisher eventPublisher;
+    private final ObjectMapper objectMapper;
 
     public static final String WAIT_QUEUE = ":user-queue:wait";
     public static final String ALLOW_QUEUE = ":user-queue:allow";
     public static final String ACCESS_TOKEN = ":user-access:";
+
+
+    @KafkaListener(topics = "queueing-system", groupId = "consumer_group01")
+    public void consume(String message) throws IOException {
+        QueueMessage queueMessage = objectMapper.readValue(message, QueueMessage.class);
+
+        log.info("Kafka 메시지 : {}", queueMessage);
+
+        String userId = queueMessage.getUserId();
+        long enterTimestamp = queueMessage.getEnterTimestamp();
+        String queueType = "reserve";
+
+        registerUserToWaitQueue(userId, queueType, enterTimestamp)
+                .doOnSuccess(rank -> log.info("Redis 대기열 등록 완료 - {}: {}등", userId, rank))
+                .doOnError(e -> log.error("Redis 등록 실패 - {}: {}", userId, e.getMessage()))
+                .subscribe();
+    }
 
     /**
      * 대기열 등록
@@ -65,6 +88,7 @@ public class UserService {
                                 return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId);
                             })
                             .map(i -> i >= 0 ? i + 1 : i)
+
                             .doOnSuccess(result -> log.info("{}님 {}번째로 사용자 대기열 등록 성공", userId, result));
                 });
     }
@@ -73,10 +97,12 @@ public class UserService {
      * 대기열 or 참가열에서 사용자 존재 여부 확인
      */
     public Mono<Boolean> isExistUserInWaitOrAllow(String userId, String queueType, String queueCategory) {
+
         String keyType = queueCategory.equals("wait") ? WAIT_QUEUE : ALLOW_QUEUE;
 
-        return reactiveRedisTemplate.opsForZSet()
-                .rank(queueType + keyType, userId)
+        return introduceArtificialDelay() // Redis rank 전에 지연 추가
+                .then(reactiveRedisTemplate.opsForZSet()
+                        .rank(queueType + keyType, userId))
                 .map(rank -> true)
                 .defaultIfEmpty(false)
                 .doOnSuccess(exists ->
@@ -87,10 +113,12 @@ public class UserService {
      * 대기열 or 참가열에서 사용자 순위 조회
      * */
     public Mono<Long> searchUserRanking(String userId, String queueType, String queueCategory) {
+
         String keyType = queueCategory.equals("wait") ? WAIT_QUEUE : ALLOW_QUEUE;
 
-        return reactiveRedisTemplate.opsForZSet()
-                .rank(queueType + keyType, userId)
+        return introduceArtificialDelay() // Redis rank 전에 지연 추가
+                .then(reactiveRedisTemplate.opsForZSet()
+                        .rank(queueType + keyType, userId))
                 .defaultIfEmpty(-1L) // 사용자가 없으면 -1 반환
                 .map(rank -> rank + 1) // 사용자 순위는 0부터 시작하므로 +1
                 .doOnNext(rank -> {
@@ -255,5 +283,9 @@ public class UserService {
                     })
                     .subscribe(); // Mono, Flux 반환형이 아니므로 직접 호출해줘야 함
         });
+    }
+
+    private Mono<Void> introduceArtificialDelay() {
+        return Mono.delay(Duration.ofMillis(500)).then();
     }
 }

@@ -27,7 +27,7 @@ public class QueueSseController {
 
     /* 4
      * sink : 이벤트를 push 하는 통로, 여기서는 QueueEventPayload 타입의 통로를 만든 것
-     * multicast() : 이 통로를 여러 클라이언트가 동시에 구독할 수 있게 함
+     * replay() : 마지막으로 발생한 이벤트를 캐싱해 두었다가, 나중에 구독한 사용자에게도 해당 이벤트를 재전달할 수 있는 방식
      * */
     private final Sinks.Many<QueueEventPayload> sink = Sinks.many().replay().limit(1);
 
@@ -66,6 +66,8 @@ public class QueueSseController {
                             try {
                                 // 참가열에 있다면 → 'confirmed' 이벤트와 입력한 사용자의 이름 반환
                                 if (allowed) {
+                                    log.info("##############1");
+
                                     json = objectMapper.writeValueAsString(Map.of(
                                             "event", "confirmed",
                                             "user_id", userId
@@ -75,6 +77,8 @@ public class QueueSseController {
 
                                     // 대기열에 있다면 → 대기열 내의 사용자 ranking 반환
                                 } else {
+                                    log.info("##############2");
+
                                     return userService.searchUserRanking(userId, queueType, "wait")
                                             .map(rank -> {
                                                 try {
@@ -98,13 +102,15 @@ public class QueueSseController {
          * 서버에서 sink.tryEmitNext() 호출할 때마다 발생하는 실시간 메시지
          * sink.asFlux() : 서버 내부에서 발생하는 모든 이벤트를 구독, filter를 통해 모든 이벤트 중 클라이언트가 요청한 queueType과 일치하는 이벤트만 골라서 처리
          * */
+        log.info("구독");
         Flux<ServerSentEvent<String>> streamEvents = sink.asFlux()
                 .filter(e -> e.getQueueType().equals(queueType))
                 .flatMap(e ->
                         userService.isExistUserInWaitOrAllow(userId, queueType, "allow")
                                 .flatMap(allowed -> {
                                     if (allowed) {
-                                        log.info("##############1");
+                                        log.info("##############3");
+
                                         try {
                                             String json = objectMapper.writeValueAsString(Map.of(
                                                     "event", "confirmed",
@@ -117,7 +123,8 @@ public class QueueSseController {
                                         }
 
                                     } else {
-                                        log.info("##############2");
+                                        log.info("##############4");
+
                                         return userService.searchUserRanking(userId, queueType, "wait")
                                                 .flatMap(rank -> {
                                                     try {
@@ -154,8 +161,7 @@ public class QueueSseController {
 
 /* 흐름 정리
  *
- * 1번에서 서버와 클라이언트가 sse 연결을 하고 나면 3번에서 sink.asFlux()를 통해 발생하는 모든 이벤트를 구독하지만 filter를 통해 사용자의 queueType에 맞는
- * , 이벤트만 수신하게 됩니다.
+ * 1번에서 서버와 클라이언트가 sse 연결을 하고 나면 3번에서 sink.asFlux()를 통해 발생하는 모든 이벤트를 받지만 filter를 통해 사용자의 queueType에 맞는 이벤트만 수신하게 됨
  *
  * service 코드에서 대기열에 변동이 발생하면 eventPublisher.publishEvent(new QueueUpdateEvent(queueType))를 통해 특정 queueType에 이벤트가 발생하였다는 것을
  * , @EventListener가 수신하여 sink.tryEmitNext(new QueueEventPayload(event.getQueueType()))를 통해 특정 queueType의 이벤트를 발생 시키고

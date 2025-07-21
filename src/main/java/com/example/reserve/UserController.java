@@ -1,5 +1,8 @@
 package com.example.reserve;
 
+import com.example.reserve.kafka.KafkaConsumerService;
+import com.example.reserve.kafka.KafkaProducerController;
+import com.example.reserve.kafka.KafkaProducerService;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -8,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -16,15 +20,14 @@ import java.time.Instant;
 public class UserController {
 
     private final UserService userService;
+    private final KafkaProducerService kafkaProducerService;
 
-    // 대기열 등록
     @PostMapping("/enter")
-    public Mono<?> registerUser(@RequestParam(name = "user_id") String userId,
-                                @RequestParam(name = "queueType", defaultValue = "reserve") String queueType){
+    public ResponseEntity<String> registerUser(@RequestParam(defaultValue = "reserve") String queueType, @RequestParam String user_id) {
 
-        long enterTimestamp = Instant.now().toEpochMilli();
+        kafkaProducerService.sendMessage("queueing-system", queueType, user_id);
 
-        return userService.registerUserToWaitQueue(userId, queueType, enterTimestamp);
+        return ResponseEntity.ok("대기열 요청이 Kafka로 전송되었습니다.");
     }
 
     // 대기열 or 참가열에서 사용자 존재 유무 확인
@@ -83,3 +86,4 @@ public class UserController {
         return userService.sendCookie(userId, queueType, response);
     }
 }
+
