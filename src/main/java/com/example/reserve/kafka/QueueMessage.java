@@ -9,12 +9,10 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class QueueMessage {
 
-    private String userId;
-
-    private long enterTimestamp;
+    private String queueType;
 
     @Override
     public String toString() {
-        return "userId : " + userId + " , " + "enterTimestamp : " + enterTimestamp;
+        return "queueType : " + queueType;
     }
 }

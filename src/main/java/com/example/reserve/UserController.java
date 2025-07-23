@@ -23,11 +23,11 @@ public class UserController {
     private final KafkaProducerService kafkaProducerService;
 
     @PostMapping("/enter")
-    public ResponseEntity<String> registerUser(@RequestParam(defaultValue = "reserve") String queueType, @RequestParam String user_id) {
+    public Mono<?> registerUser(@RequestParam(defaultValue = "reserve") String queueType, @RequestParam String user_id, @RequestParam long enterTimestamp) {
 
-        kafkaProducerService.sendMessage("queueing-system", queueType, user_id);
+        log.info("user_id : {}, enter : {}", user_id, enterTimestamp);
 
-        return ResponseEntity.ok("대기열 요청이 Kafka로 전송되었습니다.");
+        return userService.registerUserToWaitQueue(user_id, queueType, enterTimestamp);
     }
 
     // 대기열 or 참가열에서 사용자 존재 유무 확인

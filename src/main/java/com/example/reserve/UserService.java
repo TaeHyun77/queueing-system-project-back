@@ -2,10 +2,12 @@ package com.example.reserve;
 
 import com.example.reserve.exception.ErrorCode;
 import com.example.reserve.exception.ReserveException;
+import com.example.reserve.kafka.KafkaProducerService;
 import com.example.reserve.kafka.QueueMessage;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -16,6 +18,7 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 
 import java.io.IOException;
 import java.net.URLEncoder;
@@ -27,34 +30,33 @@ import java.time.Instant;
 import java.util.List;
 
 @Slf4j
+@Getter
 @RequiredArgsConstructor
 @Service
 public class UserService {
 
     // Spring WebFlux 환경에서 비동기/논블로킹 방식으로 Redis에 접근
     private final ReactiveRedisTemplate<String, String> reactiveRedisTemplate;
-    private final ApplicationEventPublisher eventPublisher;
+    private final KafkaProducerService kafkaProducerService;
     private final ObjectMapper objectMapper;
+    private final Sinks.Many<QueueEventPayload> sink = Sinks.many().replay().limit(1);
 
     public static final String WAIT_QUEUE = ":user-queue:wait";
     public static final String ALLOW_QUEUE = ":user-queue:allow";
     public static final String ACCESS_TOKEN = ":user-access:";
 
+    @KafkaListener(topics = "queueing-system", groupId = "queue-event-group")
+    public void consume(String message) {
+        try {
+            QueueMessage queueEvent = objectMapper.readValue(message, QueueMessage.class);
 
-    @KafkaListener(topics = "queueing-system", groupId = "consumer_group01")
-    public void consume(String message) throws IOException {
-        QueueMessage queueMessage = objectMapper.readValue(message, QueueMessage.class);
+            // SSE로 연결된 클라이언트에 전달
+            sink.tryEmitNext(new QueueEventPayload(queueEvent.getQueueType()));
 
-        log.info("Kafka 메시지 : {}", queueMessage);
-
-        String userId = queueMessage.getUserId();
-        long enterTimestamp = queueMessage.getEnterTimestamp();
-        String queueType = "reserve";
-
-        registerUserToWaitQueue(userId, queueType, enterTimestamp)
-                .doOnSuccess(rank -> log.info("Redis 대기열 등록 완료 - {}: {}등", userId, rank))
-                .doOnError(e -> log.error("Redis 등록 실패 - {}: {}", userId, e.getMessage()))
-                .subscribe();
+            log.info("{} 이벤트 전달 성공 !", queueEvent.getQueueType());
+        } catch (Exception e) {
+            log.error("Kafka 메시지 소비 실패", e);
+        }
     }
 
     /**
@@ -68,6 +70,8 @@ public class UserService {
         // 참가열에 사용자 존재 여부
         Mono<Boolean> existsInAllowQueue = isExistUserInWaitOrAllow(userId, queueType, "allow");
 
+        String sequenceKey = queueType + ":wait:seq";
+
         // 대기열이나 참가열에 동일한 사용자가 있다면 대기열 등록 x, 중복 등록을 막기 위함
         return Mono.zip(existsInWaitQueue, existsInAllowQueue)
                 .flatMap(tuple -> {
@@ -78,18 +82,23 @@ public class UserService {
                         return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER));
                     }
 
-                    // 중복 없으면 등록 진행
-                    return reactiveRedisTemplate.opsForZSet()
-                            .add(queueType + WAIT_QUEUE, userId, enterTimestamp)
-                            .filter(i -> i)
-                            .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER)))
-                            .flatMap(i -> {
-                                eventPublisher.publishEvent(new QueueUpdateEvent(queueType));
-                                return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId);
-                            })
-                            .map(i -> i >= 0 ? i + 1 : i)
+                    // Redis 시퀀스
+                    return reactiveRedisTemplate.opsForValue()
+                            .increment(sequenceKey)
+                            .flatMap(seq -> {
+                                double score = enterTimestamp + (seq / 1000.0); // 소수점으로 충돌 최소화
 
-                            .doOnSuccess(result -> log.info("{}님 {}번째로 사용자 대기열 등록 성공", userId, result));
+                                return reactiveRedisTemplate.opsForZSet()
+                                        .add(queueType + WAIT_QUEUE, userId, score)
+                                        .filter(i -> i)
+                                        .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER)))
+                                        .flatMap(i -> {
+                                            kafkaProducerService.sendMessage("queueing-system", queueType);
+                                            return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId);
+                                        })
+                                        .map(rank -> rank >= 0 ? rank + 1 : rank)
+                                        .doOnSuccess(result -> log.info("{}님 {}번째로 사용자 대기열 등록 성공", userId, result));
+                            });
                 });
     }
 
@@ -143,7 +152,7 @@ public class UserService {
                         if (removedCount == 0) {
                             return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE));
                         }
-                        eventPublisher.publishEvent(new QueueUpdateEvent(queueType));
+                        kafkaProducerService.sendMessage("queueing-system", queueType);
                         return Mono.<Void>empty();
                     })
                     .doOnSuccess(v -> log.info("{}님 대기열에서 취소 완료", userId));
@@ -231,7 +240,7 @@ public class UserService {
 
         return reactiveRedisTemplate.opsForZSet()
                 .add(queueType + WAIT_QUEUE, userId, newTimestamp)
-                .then(Mono.fromRunnable(() -> eventPublisher.publishEvent(new QueueUpdateEvent(queueType))))
+                .then(Mono.fromRunnable(() ->kafkaProducerService.sendMessage("queueing-system", queueType)))
                 .then();
     }
 
@@ -275,10 +284,10 @@ public class UserService {
             allowUser(queueType, maxAllowedUsers)
                     .doOnSuccess(count -> {
                         if (count > 0) {
-                            log.info("Moved {} users to the allow queue for [{}]", count, queueType);
-                            eventPublisher.publishEvent(new QueueUpdateEvent(queueType));
+                            log.info("{} 허용열로 이동한 사용자 : {}", queueType, count);
+                            kafkaProducerService.sendMessage("queueing-system", queueType);
                         } else {
-                            log.info("No users to move for queue [{}-wait → {}-allow ]", queueType, queueType);
+                            log.info("{} 허용열로 이동한 사용자 : 0 ", queueType);
                         }
                     })
                     .subscribe(); // Mono, Flux 반환형이 아니므로 직접 호출해줘야 함
