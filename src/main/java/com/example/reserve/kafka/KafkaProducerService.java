@@ -4,15 +4,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.clients.producer.RecordMetadata;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Service;
-
 import java.time.Instant;
-import java.util.concurrent.CompletableFuture;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -34,14 +30,13 @@ public class KafkaProducerService {
         return ResponseEntity.ok().build();
     }
 
-    public void sendMessage(String topic, String key, String userId) {
-        try {
-            long enterTimestamp = Instant.now().toEpochMilli();
+    public void sendMessage(String topic, String queueType) {
 
-            QueueMessage message = new QueueMessage(userId, enterTimestamp);
+        try {
+            QueueMessage message = new QueueMessage(queueType);
             String json = objectMapper.writeValueAsString(message);
 
-            kafkaTemplate.send(topic, key, json).whenComplete((result, ex) -> {
+            kafkaTemplate.send(topic, queueType, json).whenComplete((result, ex) -> {
                 if (ex == null) {
                     log.info("Kafka 전송 성공: {}", json);
                 } else {
