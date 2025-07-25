@@ -22,13 +22,10 @@ public class KafkaProducerConfig {
     public Map<String, Object> producerConfig() {
         Map<String, Object> props = new HashMap<>();
 
-        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG,
-                env.getProperty("spring.kafka.producer.bootstrap-servers"));
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, env.getProperty("spring.kafka.producer.bootstrap-servers"));
 
-        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG
-                , StringSerializer.class);
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG
-                , StringSerializer.class);
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
 
         return props;
     }

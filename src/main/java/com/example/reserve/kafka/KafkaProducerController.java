@@ -19,5 +19,4 @@ public class KafkaProducerController {
 
         return kafkaProducerService.sendMessageToKafka(queueType, message);
     }
-
 }

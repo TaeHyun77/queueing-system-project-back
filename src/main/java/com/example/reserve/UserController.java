@@ -20,12 +20,14 @@ import java.util.concurrent.atomic.AtomicLong;
 public class UserController {
 
     private final UserService userService;
-    private final KafkaProducerService kafkaProducerService;
 
     @PostMapping("/enter")
-    public Mono<?> registerUser(@RequestParam(defaultValue = "reserve") String queueType, @RequestParam String user_id, @RequestParam long enterTimestamp) {
+    public Mono<?> registerUser(@RequestParam(defaultValue = "reserve") String queueType, @RequestParam String user_id) {
 
-        log.info("user_id : {}, enter : {}", user_id, enterTimestamp);
+        Instant now = Instant.now();
+        long enterTimestamp = now.getEpochSecond() * 1_000_000_000L + now.getNano();
+
+        log.info("user_id : {}, enterTimestamp : {}", user_id, enterTimestamp);
 
         return userService.registerUserToWaitQueue(user_id, queueType, enterTimestamp);
     }

@@ -6,23 +6,18 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.event.EventListener;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
-import java.util.Locale;
 import java.util.Map;
 
 @Slf4j
-@RestController
-public class QueueSseController {
+@Service
+public class SseEventService {
 
     ObjectMapper objectMapper = new ObjectMapper();
 
@@ -34,18 +29,12 @@ public class QueueSseController {
      * */
     private final Sinks.Many<QueueEventPayload> sink;
 
-    public QueueSseController(UserService userService) {
+    public SseEventService(UserService userService) {
         this.userService = userService;
         this.sink = userService.getSink();
     }
 
-    /* 1
-     * 서버와 클라이언트가 SSE 스트림 연결
-     * produces = MediaType.TEXT_EVENT_STREAM_VALUE : text/event-stream 타입의 응답을 반환할 것을 의미
-     * ServerSentEvent<String> : SSE 형식의 메시지를 의미, Flux<>로 감쌌으므로 여러 개의 sse 메세지를 실시간으로 전송한다는 뜻
-     * */
-    @GetMapping(value = "/queue/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<String>> streamQueue(@RequestParam String userId, @RequestParam String queueType) {
+    public Flux<ServerSentEvent<String>> streamQueueEvents(String userId, String queueType) {
         log.info("sse 연결 요청");
 
         /* 2
@@ -75,7 +64,7 @@ public class QueueSseController {
                                             return Mono.error(new ReserveException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.ALLOW_STATUS_JSON_EXCEPTION));
                                         }
 
-                                    // 사용자가 대기열에 있는 경우 사용자의 ranking을 조회하여 반환
+                                        // 사용자가 대기열에 있는 경우 사용자의 ranking을 조회하여 반환
                                     } else {
                                         return userService.searchUserRanking(userId, queueType, "wait")
                                                 .flatMap(rank -> {
