@@ -28,6 +28,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Getter
@@ -94,7 +95,14 @@ public class UserService {
                                         .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER)))
                                         .flatMap(i -> {
                                             kafkaProducerService.sendMessage("queueing-system", queueType);
-                                            return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId);
+
+                                            String statusKey = queueType + ":status";
+
+                                            return reactiveRedisTemplate.opsForHash()
+                                                    .put(statusKey, userId, "WAIT")
+                                                    .then(
+                                                            reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId)
+                                                    );
                                         })
                                         .map(rank -> rank >= 0 ? rank + 1 : rank)
                                         .doOnSuccess(result -> log.info("{}님 {}번째로 사용자 대기열 등록 성공", userId, result));
@@ -147,30 +155,45 @@ public class UserService {
         log.info("{}에서 삭제된 사용자 : {}", queueCategory, userId);
 
         if (queueCategory.equals("wait")) {
-            return reactiveRedisTemplate.opsForZSet().remove(queueType + WAIT_QUEUE, userId)
+            return reactiveRedisTemplate.opsForZSet()
+                    .remove(queueType + WAIT_QUEUE, userId)
                     .flatMap(removedCount -> {
                         if (removedCount == 0) {
                             return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE));
                         }
-                        kafkaProducerService.sendMessage("queueing-system", queueType);
-                        return Mono.<Void>empty();
+
+                        // 상태 정보도 함께 제거
+                        return reactiveRedisTemplate.opsForHash()
+                                .remove(queueType + ":status", userId)
+                                .then(Mono.fromRunnable(() -> {
+                                    kafkaProducerService.sendMessage("queueing-system", queueType);
+                                }));
                     })
-                    .doOnSuccess(v -> log.info("{}님 대기열에서 취소 완료", userId));
+                    .doOnSuccess(v -> log.info("{}님 대기열에서 취소 완료", userId))
+                    .then();
         } else {
             return reactiveRedisTemplate.opsForZSet().remove(queueType + ALLOW_QUEUE, userId)
                     .flatMap(removedCount -> {
                         if (removedCount == 0) {
                             return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE));
                         }
+
                         String tokenTtlKey = "token:" + userId + ":TTL";
+                        String statusKey = queueType + ":status";
 
                         return reactiveRedisTemplate.delete(tokenTtlKey)
                                 .doOnSuccess(deleted -> log.info("{}님의 TTL 키 삭제 완료", userId))
                                 .doOnError(e -> log.error("{}님의 TTL 키 삭제 중 오류 발생: {}", userId, e.getMessage()))
-                                .then();
+                                .then(
+                                        reactiveRedisTemplate.opsForHash()
+                                                .remove(statusKey, userId)
+                                                .doOnSuccess(deleted -> log.info("{}님의 상태 해시 제거 완료", userId))
+                                                .doOnError(e -> log.error("{}님의 상태 해시 제거 중 오류 발생: {}", userId, e.getMessage()))
+                                );
                     })
                     .doOnSuccess(v -> log.info("{}님 참가열에서 취소 완료", userId))
-                    .doOnError(e -> log.error("{}님 참가열 취소 중 오류 발생: {}", userId, e.getMessage()));
+                    .doOnError(e -> log.error("{}님 참가열 취소 중 오류 발생: {}", userId, e.getMessage()))
+                    .then();
         }
     }
 
