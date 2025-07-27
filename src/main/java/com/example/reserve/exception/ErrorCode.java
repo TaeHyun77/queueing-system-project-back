@@ -15,8 +15,7 @@ public enum ErrorCode {
 
     ALLOW_STATUS_JSON_EXCEPTION("ALLOW_STATUS_JSON_EXCEPTION", "허용 메세지 json 변환 실패"),
 
-    UPDATE_STATUS_JSON_EXCEPTION("UPDATE_STATUS_JSON_EXCEPTION", "업데이트 메세지 json 변환 실패");
-
+    NOT_EXISTS_OUTBOX("NOT_EXISTS_OUTBOX", "해당 OUTBOX가 존재하지 않습니다.");
 
     private final String errorCode;
 
