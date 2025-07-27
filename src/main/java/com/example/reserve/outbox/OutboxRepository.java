@@ -2,5 +2,10 @@ package com.example.reserve.outbox;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface OutboxRepository extends JpaRepository {
+import java.util.Optional;
+
+public interface OutboxRepository extends JpaRepository<Outbox, Long> {
+
+    Optional<Outbox> findByUserId(String userId);
+
 }

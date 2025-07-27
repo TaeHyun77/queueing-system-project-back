@@ -18,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import java.net.URLEncoder;
@@ -61,7 +62,7 @@ public class UserService {
     }
 
     /**
-     * 대기열 등록
+     * 대기열 등록 - WAIT
      * */
     public Mono<Long> registerUserToWaitQueue(String userId, String queueType, long enterTimestamp) {
 
@@ -81,17 +82,15 @@ public class UserService {
                         return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER));
                     }
 
-                    // Redis 시퀀스
                     return reactiveRedisTemplate.opsForZSet()
                             .add(queueType + WAIT_QUEUE, userId, enterTimestamp)
                             .filter(i -> i)
                             .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER)))
-                            .flatMap(i -> {
-                                sendEventToKafka(queueType, userId, "WAIT");
-
-                                return reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId);
-
-                            })
+                            .flatMap(i ->
+                                    // sendEventToKafka 실행 후 이어서 랭크 조회
+                                    sendEventToKafka(queueType, userId, "WAIT")
+                                            .then(reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId))
+                            )
                             .map(rank -> rank >= 0 ? rank + 1 : rank)
                             .doOnSuccess(result -> log.info("{}님 {}번째로 사용자 대기열 등록 성공", userId, result));
                 });
@@ -135,7 +134,7 @@ public class UserService {
     }
 
     /**
-     * 대기열 or 참가열에서 사용자 등록된 사용자 제거
+     * 대기열 or 참가열에서 사용자 등록된 사용자 제거 - CANCELED
      * */
     public Mono<Void> cancelWaitUser(String userId, String queueType, String queueCategory) {
 
@@ -149,12 +148,9 @@ public class UserService {
                             return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE));
                         }
 
-                        // 상태 정보도 함께 제거
-                        return reactiveRedisTemplate.opsForHash()
-                                .remove(queueType + ":status", userId)
-                                .then(Mono.fromRunnable(() -> {
-                                    sendEventToKafka(queueType, userId, "WAIT");
-                                }));
+                        return Mono.fromRunnable(() -> {
+                            sendEventToKafka(queueType, userId, "CANCELED");
+                        });
                     })
                     .doOnSuccess(v -> log.info("{}님 대기열에서 취소 완료", userId))
                     .then();
@@ -166,17 +162,10 @@ public class UserService {
                         }
 
                         String tokenTtlKey = "token:" + userId + ":TTL";
-                        String statusKey = queueType + ":status";
 
                         return reactiveRedisTemplate.delete(tokenTtlKey)
                                 .doOnSuccess(deleted -> log.info("{}님의 TTL 키 삭제 완료", userId))
-                                .doOnError(e -> log.error("{}님의 TTL 키 삭제 중 오류 발생: {}", userId, e.getMessage()))
-                                .then(
-                                        reactiveRedisTemplate.opsForHash()
-                                                .remove(statusKey, userId)
-                                                .doOnSuccess(deleted -> log.info("{}님의 상태 해시 제거 완료", userId))
-                                                .doOnError(e -> log.error("{}님의 상태 해시 제거 중 오류 발생: {}", userId, e.getMessage()))
-                                );
+                                .doOnError(e -> log.error("{}님의 TTL 키 삭제 중 오류 발생: {}", userId, e.getMessage()));
                     })
                     .doOnSuccess(v -> log.info("{}님 참가열에서 취소 완료", userId))
                     .doOnError(e -> log.error("{}님 참가열 취소 중 오류 발생: {}", userId, e.getMessage()))
@@ -242,7 +231,7 @@ public class UserService {
     }
 
     /**
-     * 새로고침 시 대기열 후순위 재등록 로직
+     * 새로고침 시 대기열 후순위 재등록 로직 - WAIT
      * */
     public Mono<Void> reEnterWaitQueue(String userId, String queueType) {
 
@@ -256,7 +245,7 @@ public class UserService {
     }
 
     /**
-     * 대기열에 있는 상위 count 명을 참가열로 옮기고, 토큰을 생성하여 redis에 저장 ( 유효 기간 10분 )
+     * 대기열에 있는 상위 count 명을 참가열로 옮기고, 토큰을 생성하여 redis에 저장 ( 유효 기간 10분 ) - ALLOW
      */
     public Mono<Long> allowUser(String queueType, Long count) {
 
@@ -281,7 +270,7 @@ public class UserService {
                                     reactiveRedisTemplate.opsForZSet()
                                             .add(tokenSetKey, userId, expireEpochSeconds)
                             )
-                            .doOnSuccess(i -> sendEventToKafka(queueType, userId, "WAIT"))
+                            .flatMap(i -> sendEventToKafka(queueType, userId, "ALLOW"))
                             .thenReturn(userId);
                 })
                 .count()
@@ -315,19 +304,26 @@ public class UserService {
         return Mono.delay(Duration.ofMillis(500)).then();
     }
 
-    private void sendEventToKafka(String queueType, String user_id, String status) {
-        try {
-            kafkaProducerService.sendMessage("queueing-system", queueType);
-
-            Outbox outbox = Outbox.builder()
-                    .queueType(queueType)
-                    .user_id(user_id)
-                    .status(status)
-                    .build();
+    @Transactional
+    public Mono<Void> sendEventToKafka(String queueType, String userId, String status) {
+        return Mono.fromCallable(() -> {
+            Outbox outbox = outboxRepository.findByUserId(userId)
+                    .map(existing -> {
+                        log.info("상태 변경 ⇒ {}", status);
+                        existing.updateUserStatus(status);
+                        return existing;
+                    })
+                    .orElseGet(() -> Outbox.builder()
+                            .queueType(queueType)
+                            .userId(userId)
+                            .status(status)
+                            .build());
 
             outboxRepository.save(outbox);
-        } catch(Exception e) {
-            log.warn("Kafka 이벤트 발행 실패");
-        }
+            return outbox;
+        }).flatMap(savedOutbox -> {
+            kafkaProducerService.sendMessage("queueing-system", queueType);
+            return Mono.empty();
+        });
     }
 }
