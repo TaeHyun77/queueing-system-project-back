@@ -21,15 +21,15 @@ public class UserController {
 
     private final UserService userService;
 
-    @PostMapping("/enter")
-    public Mono<?> registerUser(@RequestParam(defaultValue = "reserve") String queueType, @RequestParam String user_id) {
+    @PostMapping("/register")
+    public Mono<?> registerUser(@RequestParam(defaultValue = "reserve") String queueType, @RequestParam String userId) {
 
         Instant now = Instant.now();
-        long enterTimestamp = now.getEpochSecond() * 1_000_000_000L + now.getNano();
+        long enterTimestamp = now.getEpochSecond() * 1_000_000_000L + now.getNano(); // 입장 시간을 나노초로 설정
 
-        log.info("user_id : {}, enterTimestamp : {}", user_id, enterTimestamp);
+        log.info("userId : {}, enterTimestamp : {}", userId, enterTimestamp);
 
-        return userService.registerUserToWaitQueue(user_id, queueType, enterTimestamp);
+        return userService.registerUserToWaitQueue(userId, queueType, enterTimestamp);
     }
 
     // 대기열 or 참가열에서 사용자 존재 유무 확인

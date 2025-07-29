@@ -3,7 +3,6 @@ package com.example.reserve;
 import com.example.reserve.exception.ErrorCode;
 import com.example.reserve.exception.ReserveException;
 import com.example.reserve.kafka.KafkaProducerService;
-import com.example.reserve.kafka.QueueMessage;
 import com.example.reserve.outbox.Outbox;
 import com.example.reserve.outbox.OutboxRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,7 +14,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,23 +41,10 @@ public class UserService {
 
     private final OutboxRepository outboxRepository;
 
-    public static final String WAIT_QUEUE = ":user-queue:wait";
-    public static final String ALLOW_QUEUE = ":user-queue:allow";
-    public static final String ACCESS_TOKEN = ":user-access:";
-
-    @KafkaListener(topics = "queueing-system", groupId = "queue-event-group")
-    public void consume(String message) {
-        try {
-            QueueMessage queueEvent = objectMapper.readValue(message, QueueMessage.class);
-
-            // SSE로 연결된 클라이언트에 전달
-            sink.tryEmitNext(new QueueEventPayload(queueEvent.getQueueType()));
-
-            log.info("{} 이벤트 전달 성공 !", queueEvent.getQueueType());
-        } catch (Exception e) {
-            log.error("Kafka 메시지 소비 실패", e);
-        }
-    }
+    private static final String WAIT_QUEUE = ":user-queue:wait";
+    private static final String ALLOW_QUEUE = ":user-queue:allow";
+    private static final String ACCESS_TOKEN = ":user-access:";
+    private static final String TOKEN_TTL_INFO = "reserve" + ":USERS-TTL:INFO";
 
     /**
      * 대기열 등록 - WAIT
@@ -87,7 +72,7 @@ public class UserService {
                             .filter(i -> i)
                             .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER)))
                             .flatMap(i ->
-                                    // sendEventToKafka 실행 후 이어서 랭크 조회
+                                    // sendEventToKafka 실행 후 이어서 순위 조회
                                     sendEventToKafka(queueType, userId, "WAIT")
                                             .then(reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId))
                             )
@@ -103,9 +88,8 @@ public class UserService {
 
         String keyType = queueCategory.equals("wait") ? WAIT_QUEUE : ALLOW_QUEUE;
 
-        return introduceArtificialDelay() // Redis rank 전에 지연 추가
-                .then(reactiveRedisTemplate.opsForZSet()
-                        .rank(queueType + keyType, userId))
+        return reactiveRedisTemplate.opsForZSet()
+                .rank(queueType + keyType, userId)
                 .map(rank -> true)
                 .defaultIfEmpty(false)
                 .doOnSuccess(exists ->
@@ -119,16 +103,15 @@ public class UserService {
 
         String keyType = queueCategory.equals("wait") ? WAIT_QUEUE : ALLOW_QUEUE;
 
-        return introduceArtificialDelay() // Redis rank 전에 지연 추가, 지연 테스트를 위함
-                .then(reactiveRedisTemplate.opsForZSet()
-                        .rank(queueType + keyType, userId))
+        return reactiveRedisTemplate.opsForZSet()
+                .rank(queueType + keyType, userId)
                 .defaultIfEmpty(-1L) // 사용자가 없으면 -1 반환
                 .map(rank -> rank + 1) // 사용자 순위는 0부터 시작하므로 +1
                 .doOnNext(rank -> {
-                    if (rank <= 0) {
-                        log.warn("[{}] {}님이 존재하지 않습니다. 순위: {}", queueCategory, userId, rank);
+                    if (rank > 0) {
+                        log.info("[{}] {}님의 현재 순위 : {}번", queueCategory, userId, rank);
                     } else {
-                        log.info("[{}] {}님의 현재 순위는 {}번입니다.", queueCategory, userId, rank);
+                        log.warn("[{}] {}님이 존재하지 않습니다", queueCategory, userId);
                     }
                 });
     }
@@ -156,16 +139,20 @@ public class UserService {
                     .then();
         } else {
             return reactiveRedisTemplate.opsForZSet().remove(queueType + ALLOW_QUEUE, userId)
-                    .flatMap(removedCount -> {
-                        if (removedCount == 0) {
+                    .flatMap(allowRemovedCount -> {
+                        if (allowRemovedCount == 0) {
                             return Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.USER_NOT_FOUND_IN_THE_QUEUE));
                         }
 
-                        String tokenTtlKey = "token:" + userId + ":TTL";
-
-                        return reactiveRedisTemplate.delete(tokenTtlKey)
-                                .doOnSuccess(deleted -> log.info("{}님의 TTL 키 삭제 완료", userId))
-                                .doOnError(e -> log.error("{}님의 TTL 키 삭제 중 오류 발생: {}", userId, e.getMessage()));
+                        return reactiveRedisTemplate.opsForZSet()
+                                .remove(TOKEN_TTL_INFO, userId)
+                                .doOnSuccess(ttlRemovedCount -> {
+                                    if (ttlRemovedCount > 0) {
+                                        log.info("{}님의 TTL 키 삭제 완료", userId);
+                                    } else {
+                                        log.warn("{}님의 TTL 키가 존재하지 않아 삭제되지 않았습니다.", userId);
+                                    }
+                                });
                     })
                     .doOnSuccess(v -> log.info("{}님 참가열에서 취소 완료", userId))
                     .doOnError(e -> log.error("{}님 참가열 취소 중 오류 발생: {}", userId, e.getMessage()))
@@ -193,27 +180,7 @@ public class UserService {
     }
 
     /**
-     * 토큰 유효성 검사
-     * */
-    public Mono<Boolean> isAccessTokenValid(String userId, String queueType, String token) {
-        String tokenKey = "token:" + userId + ":TTL";
-
-        return reactiveRedisTemplate.opsForValue()
-                .get(tokenKey) // Redis에서 저장된 사용자의 TTL 정보 가져오기
-                .flatMap(storedToken -> {
-                    if (storedToken == null) {
-                        return Mono.just(false); // TTL 만료됨
-                    }
-
-                    // TTL이 만료되지 않았다면
-                    return generateAccessToken(userId, queueType)
-                            .map(generatedToken -> generatedToken.equals(token));
-                })
-                .defaultIfEmpty(false); // 키 자체가 아예 없을 경우
-    }
-
-    /**
-     * 쿠키에 생성한 토큰을 저장
+     * 생성한 토큰을 쿠키에 저장
      * */
     public Mono<ResponseEntity<String>> sendCookie(String userId, String queueType, HttpServletResponse response) {
 
@@ -231,7 +198,26 @@ public class UserService {
     }
 
     /**
-     * 새로고침 시 대기열 후순위 재등록 로직 - WAIT
+     * 토큰 유효성 검사
+     * */
+    public Mono<Boolean> isAccessTokenValid(String userId, String queueType, String token) {
+
+        return reactiveRedisTemplate.opsForZSet()
+                .score(TOKEN_TTL_INFO, userId)
+                .flatMap(score -> {
+                    long expireTime = score.longValue();
+                    long now = Instant.now().getEpochSecond();
+
+                    if (expireTime < now) return Mono.just(false);
+
+                    return generateAccessToken(userId, queueType)
+                                    .map(generatedToken -> generatedToken.equals(token));
+                })
+                .defaultIfEmpty(false);
+    }
+
+    /**
+     * 대기열에서 새로고침 시 대기열 후순위 재등록 로직 - WAIT
      * */
     public Mono<Void> reEnterWaitQueue(String userId, String queueType) {
 
@@ -258,17 +244,16 @@ public class UserService {
                     Instant now = Instant.now();
                     long timestamp = now.getEpochSecond() * 1_000_000_000L + now.getNano();
 
-                    // 유효 기간을 명시
+                    // TTL 유효 기간을 명시
                     long expireEpochSeconds = now.plus(Duration.ofMinutes(10)).getEpochSecond();
 
                     String allowQueueKey = queueType + ALLOW_QUEUE;
-                    String tokenSetKey = queueType + ":token:allow";
 
                     return reactiveRedisTemplate.opsForZSet()
                             .add(allowQueueKey, userId, timestamp)
                             .then(
                                     reactiveRedisTemplate.opsForZSet()
-                                            .add(tokenSetKey, userId, expireEpochSeconds)
+                                            .add(TOKEN_TTL_INFO, userId, expireEpochSeconds)
                             )
                             .flatMap(i -> sendEventToKafka(queueType, userId, "ALLOW"))
                             .thenReturn(userId);
@@ -300,30 +285,24 @@ public class UserService {
         });
     }
 
-    private Mono<Void> introduceArtificialDelay() {
-        return Mono.delay(Duration.ofMillis(500)).then();
-    }
-
+    // Outbox 테이블에 변동 사항이 발생하면 kafka 이벤트가 ( 전체 레코드가 JSON 형태로 ) 발행됨
     @Transactional
     public Mono<Void> sendEventToKafka(String queueType, String userId, String status) {
-        return Mono.fromCallable(() -> {
-            Outbox outbox = outboxRepository.findByUserId(userId)
+        return Mono.fromRunnable(() -> {
+            outboxRepository.findByUserId(userId)
                     .map(existing -> {
                         log.info("상태 변경 ⇒ {}", status);
                         existing.updateUserStatus(status);
-                        return existing;
+                        return outboxRepository.save(existing);
                     })
-                    .orElseGet(() -> Outbox.builder()
-                            .queueType(queueType)
-                            .userId(userId)
-                            .status(status)
-                            .build());
-
-            outboxRepository.save(outbox);
-            return outbox;
-        }).flatMap(savedOutbox -> {
-            kafkaProducerService.sendMessage("queueing-system", queueType);
-            return Mono.empty();
+                    .orElseGet(() -> {
+                        Outbox newOutbox = Outbox.builder()
+                                .queueType(queueType)
+                                .userId(userId)
+                                .status(status)
+                                .build();
+                        return outboxRepository.save(newOutbox);
+                    });
         });
     }
 }
