@@ -22,9 +22,9 @@ FE : React.js, JavaScript
 
 DB : MySQL, Redis
 
-Infra : Kafka, Debezium connector
+INFRA : Kafka, Debezium connector
 
-Etc : SSE Sink <br><br>
+ETC : SSE Sink <br><br>
 
 ### 구현 과정<br>
 
