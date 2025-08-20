@@ -10,9 +10,11 @@ BE : SpringBoot, Spring Webflux
 
 FE : React.js, JavaScript
 
-DB : Redis의 sorted set
+DB : MySQL, Redis
 
-Etc : sse 통신<br><br>
+Infra : Kafka
+
+Etc : SSE Sink<br><br>
 
 ### 구현 과정<br>
 
