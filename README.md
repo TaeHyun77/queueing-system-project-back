@@ -12,7 +12,7 @@ ETC : SSE <br><br>
 
 <p align="center"><img width="794" height="307" alt="Image" src="https://github.com/user-attachments/assets/27018eed-4c3b-4814-b588-c5e77715c6bd" /><br><br>
 
-### 작동 흐름
+### 요청 흐름
 
 ---
 
@@ -37,6 +37,9 @@ ETC : SSE <br><br>
 
 또한, Debezium은 MySQL의 binlog를 기반으로 이벤트를 전달하기 때문에 이벤트 손실 없이 재시도가 가능하고, 변경 사항의 순서를 자연스럽게 보장할 수 있습니다.
 
-결과적으로, Debezium 기반의 Transactional Outbox Pattern을 구현함으로써 DB와 이벤트 스트림 간의 불일치 문제를 해결하고, 이벤트 소실 방지, 순서 보장, 데이터 정합성을 처리할 수 있었습니다.
+결과적으로, Debezium 기반의 Transactional Outbox Pattern을 구현함으로써 DB와 이벤트 스트림 간의 불일치 문제를 해결하고, 이벤트 소실 방지, 순서 보장, 데이터 정합성을 처리할 수 있었습니다.<br><br>
 
+### 추후 개선점
+비동기 로직에서의 DB 사용은 트랜잭션 지연 및 연결 풀 고갈 등으로 병목을 유발할 수 있으므로 이를 제거하고 Kotlin 기반의 코루틴을 사용하여 경량 동시성 및 효율적인 비동기 처리를 하고자 하며, 이후 사용할 멱등성 로직 적용에서의 DB는 R2DBC를 사용하거나 블로킹 호출을 별도의 IO 디스패처로 분리하여 처리할 예정입니다  
 
+추가적으로, 단일 서버에서 분산 서버로 확장 함으로써 부하 분산 및 고가용성을 확보할 계획입니다.
