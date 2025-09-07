@@ -1,3 +1,15 @@
+**사용 기술**
+
+BE : SpringBoot, Spring Webflux, Java
+
+FE : React.js, JavaScript
+
+DB/Cache : MySQL, Redis
+
+INFRA : Kafka
+
+ETC : SSE <br><br>
+
 <p align="center"><img width="794" height="307" alt="Image" src="https://github.com/user-attachments/assets/27018eed-4c3b-4814-b588-c5e77715c6bd" /><br><br>
 
 ### 요청 흐름
@@ -9,22 +21,6 @@
 3. 사용자 등록, 삭제, 스케줄러에 의한 허용열 이동 등의 이벤트가 발생할 때마다 해당 사용자의 Outbox 상태 값이 변경됩니다<br><br>
 4. Outbox 테이블의 변경으로 Binary Log 값이 갱신되면, Debezium 커넥터가 이를 감지하여 카프카에 이벤트를 발행하고, 해당 메시지는 컨슈머를 통해 서버에 연결된 모든 Sink로 전달합니다.<br><br>
 5. Sink 로직에서는 Redis 대기열에 있는 사용자의 경우 현재 순위를 조회해 전달하고, 허용열에 있는 사용자의 경우 ‘confirm’ 이벤트를 전달합니다. 클라이언트가 이 ‘confirm’ 이벤트를 수신하면 예약 페이지로 이동합니다.<br><br>
-
-### 구현
-
----
-
-**사용 기술**
-
-BE : SpringBoot, Spring Webflux
-
-FE : React.js, JavaScript
-
-DB : MySQL, Redis
-
-INFRA : Kafka, Debezium connector
-
-ETC : SSE Sink <br><br>
 
 ### 구현 과정<br>
 
