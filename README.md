@@ -1,7 +1,7 @@
 <p align="center"><img width="794" height="307" alt="Image" src="https://github.com/user-attachments/assets/27018eed-4c3b-4814-b588-c5e77715c6bd" /><br><br>
 
-**사용 기술**
-
+### 사용 기술
+---
 BE : SpringBoot, Spring Webflux, Java
 
 FE : React.js, JavaScript
