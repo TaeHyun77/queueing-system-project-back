@@ -1,9 +1,12 @@
-package com.example.reserve;
+package com.example.reserve.sse;
 
+import com.example.reserve.queue.QueueEventPayload;
+import com.example.reserve.queue.QueueService;
 import com.example.reserve.exception.ErrorCode;
 import com.example.reserve.exception.ReserveException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -15,24 +18,21 @@ import reactor.core.publisher.Sinks;
 
 import java.util.Map;
 
+@Getter
 @Slf4j
+@RequiredArgsConstructor
 @Service
 public class SseEventService {
 
     ObjectMapper objectMapper = new ObjectMapper();
 
-    private final UserService userService;
+    private final QueueService queueService;
 
     /*
      * sink : 이벤트를 push 하는 통로, 여기서는 QueueEventPayload 타입의 통로를 만든 것
      * replay() : 마지막으로 발생한 이벤트를 캐싱해 두었다가, 나중에 구독한 사용자에게도 해당 이벤트를 재전달할 수 있는 방식
      * */
-    private final Sinks.Many<QueueEventPayload> sink;
-
-    public SseEventService(UserService userService) {
-        this.userService = userService;
-        this.sink = userService.getSink();
-    }
+    private final Sinks.Many<QueueEventPayload> sink = Sinks.many().replay().limit(1);
 
     public Flux<ServerSentEvent<String>> streamQueueEvents(String userId, String queueType) {
         log.info("sse 연결 요청");
@@ -48,7 +48,7 @@ public class SseEventService {
         return sink.asFlux()
                 .filter(e -> e.getQueueType().equals(queueType))
                 .flatMap(e ->
-                        userService.isExistUserInWaitOrAllow(userId, queueType, "allow")
+                        queueService.isExistUserInWaitOrAllow(userId, queueType, "allow")
                                 .flatMap(isAllowed -> {
 
                                     // 사용자가 참가열에 있는 경우
@@ -66,7 +66,7 @@ public class SseEventService {
 
                                         // 사용자가 대기열에 있는 경우 사용자의 ranking을 조회하여 반환
                                     } else {
-                                        return userService.searchUserRanking(userId, queueType, "wait")
+                                        return queueService.searchUserRanking(userId, queueType, "wait")
                                                 .flatMap(rank -> {
                                                     try {
                                                         // 존재하지 않는 사용자 처리, 존재한다면 순위를 1부터 시작하도록 설정했기 때문에 <= 조건 사용
