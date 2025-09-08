@@ -1,4 +1,4 @@
-package com.example.reserve;
+package com.example.reserve.queue;
 
 import com.example.reserve.exception.ErrorCode;
 import com.example.reserve.exception.ReserveException;
@@ -6,14 +6,14 @@ import com.example.reserve.kafka.KafkaProducerService;
 import com.example.reserve.outbox.Outbox;
 import com.example.reserve.outbox.OutboxRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.servlet.http.Cookie;
-import jakarta.servlet.http.HttpServletResponse;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,14 +31,12 @@ import java.util.List;
 @Getter
 @RequiredArgsConstructor
 @Service
-public class UserService {
+public class QueueService {
 
     // Spring WebFlux 환경에서 비동기/논블로킹 방식으로 Redis에 접근
     private final ReactiveRedisTemplate<String, String> reactiveRedisTemplate;
     private final KafkaProducerService kafkaProducerService;
     private final ObjectMapper objectMapper;
-    private final Sinks.Many<QueueEventPayload> sink = Sinks.many().replay().limit(1);
-
     private final OutboxRepository outboxRepository;
 
     private static final String WAIT_QUEUE = ":user-queue:wait";
@@ -117,7 +115,7 @@ public class UserService {
     }
 
     /**
-     * 대기열 or 참가열에서 사용자 등록된 사용자 제거 - CANCELED
+     * 대기열 or 참가열에서 등록된 사용자 제거 - CANCELED
      * */
     public Mono<Void> cancelWaitUser(String userId, String queueType, String queueCategory) {
 
@@ -182,16 +180,18 @@ public class UserService {
     /**
      * 생성한 토큰을 쿠키에 저장
      * */
-    public Mono<ResponseEntity<String>> sendCookie(String userId, String queueType, HttpServletResponse response) {
+    public Mono<ResponseEntity<String>> sendCookie(String userId, String queueType, ServerHttpResponse response) {
 
         log.info("userId : {}", userId);
         String encodedName = URLEncoder.encode(userId, StandardCharsets.UTF_8);
 
-        return UserService.generateAccessToken(userId, queueType)
+        return QueueService.generateAccessToken(userId, queueType)
                 .map(token -> {
-                    Cookie cookie = new Cookie(queueType + "_user-access-cookie_" + encodedName, token);
-                    cookie.setPath("/");
-                    cookie.setMaxAge(300);
+                    ResponseCookie cookie = ResponseCookie.from(queueType + "_user-access-cookie_" + encodedName, token)
+                            .path("/")
+                            .maxAge(Duration.ofSeconds(300))
+                            .build();
+
                     response.addCookie(cookie);
                     return ResponseEntity.ok("쿠키 발급 완료");
                 });
