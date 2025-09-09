@@ -11,17 +11,18 @@ import java.time.Instant;
 
 @Slf4j
 @RequiredArgsConstructor
-@RequestMapping("/user")
+@RequestMapping("/queue")
 @RestController
 public class QueueController {
 
     private final QueueService queueService;
 
-    @PostMapping("/register")
-    public Mono<?> registerUser(@RequestParam(defaultValue = "reserve") String queueType, @RequestParam String userId) {
+    @PostMapping("/register/{queueType}/{userId}")
+    public Mono<Long> registerUser(@PathVariable("queueType") String queueType,
+                                   @PathVariable("userId") String userId) {
 
         Instant now = Instant.now();
-        long enterTimestamp = now.getEpochSecond() * 1_000_000_000L + now.getNano(); // 입장 시간을 나노초로 설정
+        long enterTimestamp = now.getEpochSecond() * 1_000_000_000L + now.getNano() / 1000L;
 
         log.info("userId : {}, enterTimestamp : {}", userId, enterTimestamp);
 
