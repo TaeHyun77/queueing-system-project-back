@@ -274,13 +274,6 @@ public class QueueService {
 
         queueTypes.forEach(queueType -> {
             allowUser(queueType, maxAllowedUsers)
-                    .doOnSuccess(count -> {
-                        if (count > 0) {
-                            log.info("{} 허용열로 이동한 사용자 : {}", queueType, count);
-                        } else {
-                            log.info("{} 허용열로 이동한 사용자 : 0 ", queueType);
-                        }
-                    })
                     .subscribe(); // Mono, Flux 반환형이 아니므로 직접 호출해줘야 함
         });
     }

@@ -1,4 +1,4 @@
-package com.example.reserve.config;
+package com.example.reserve;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.reactive.config.CorsRegistry;

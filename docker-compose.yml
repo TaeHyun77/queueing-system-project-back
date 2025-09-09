@@ -1,0 +1,47 @@
+services:
+
+  airdnb-prometheus:
+    image: prom/prometheus
+    container_name: airdnb-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring-net
+
+  # grafana
+  airdnb-local-grafana:
+    image: grafana/grafana
+    ports:
+      - "3001:3000"
+    networks:
+      - monitoring-net
+
+  mysql_exporter_service:
+    image: prom/mysqld-exporter:latest
+    container_name: mysql-exporter
+    restart: always
+    ports:
+      - "9104:9104"
+    command:
+      - "--mysqld.username=taehyun:0136"
+      - "--mysqld.address=host.docker.internal:3306"
+    networks:
+      - monitoring-net
+
+  redis-exporter:
+    container_name: redis-exporter
+    image: oliver006/redis_exporter:latest
+    environment:
+      - REDIS_ADDR=redis://host.docker.internal:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      - airdnb-prometheus
+    networks:
+      - monitoring-net
+    restart: always
+
+networks:
+  monitoring-net:
