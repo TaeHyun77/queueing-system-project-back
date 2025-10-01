@@ -18,7 +18,7 @@ public class QueueController {
     private final QueueService queueService;
 
     @PostMapping("/register/{queueType}/{userId}")
-    public Mono<Long> registerUser(@PathVariable("queueType") String queueType,
+    public Mono<Void> registerUser(@PathVariable("queueType") String queueType,
                                    @PathVariable("userId") String userId) {
 
         Instant now = Instant.now();
