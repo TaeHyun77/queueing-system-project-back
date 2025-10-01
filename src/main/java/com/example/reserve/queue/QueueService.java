@@ -47,7 +47,7 @@ public class QueueService {
     /**
      * 대기열 등록 - WAIT
      * */
-    public Mono<Long> registerUserToWaitQueue(String userId, String queueType, long enterTimestamp) {
+    public Mono<Void> registerUserToWaitQueue(String userId, String queueType, long enterTimestamp) {
 
         // 대기열에 사용자 존재 여부
         Mono<Boolean> existsInWaitQueue = isExistUserInWaitOrAllow(userId, queueType, "wait");
@@ -69,13 +69,8 @@ public class QueueService {
                             .add(queueType + WAIT_QUEUE, userId, enterTimestamp)
                             .filter(i -> i)
                             .switchIfEmpty(Mono.error(new ReserveException(HttpStatus.BAD_REQUEST, ErrorCode.ALREADY_REGISTERED_USER)))
-                            .flatMap(i ->
-                                    // sendEventToKafka 실행 후 이어서 순위 조회
-                                    sendEventToKafka(queueType, userId, "WAIT")
-                                            .then(reactiveRedisTemplate.opsForZSet().rank(queueType + WAIT_QUEUE, userId))
-                            )
-                            .map(rank -> rank >= 0 ? rank + 1 : rank)
-                            .doOnSuccess(result -> log.info("{}님 {}번째로 사용자 대기열 등록 성공", userId, result));
+                            .flatMap(i -> kafkaProducerService.sendMessage(queueType))
+                            .doOnSuccess(v -> log.info("{}님 사용자 대기열 등록 성공", userId));
                 });
     }
 
